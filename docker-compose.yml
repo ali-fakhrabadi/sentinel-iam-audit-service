@@ -1,0 +1,295 @@
+# Sentinel IAM & Audit Service - single-host stack.
+#
+#   make env    # once: create .env with generated secrets
+#   make up     # build, migrate and start; waits until health checks pass
+#
+# Networks:
+#   backend  internal only (no internet access): PostgreSQL, Redis, app processes
+#   edge     publishes the API port on the host (web only)
+#   egress   outbound internet for webhook delivery (Celery worker only)
+#
+# Database roles (created by docker/postgres/initdb on first start):
+#   POSTGRES_SUPERUSER  bootstrap and test runner only
+#   DB_OWNER_USER       schema owner, used by the one-shot "migrate" service
+#   DB_APP_USER         data access only, used by web, worker and beat
+
+name: sentinel
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-app-environment: &app-environment
+  DJANGO_SETTINGS_MODULE: config.settings
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?is required - run make env}
+  DJANGO_DEBUG: ${DJANGO_DEBUG:-false}
+  DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
+  DJANGO_CSRF_TRUSTED_ORIGINS: ${DJANGO_CSRF_TRUSTED_ORIGINS:-}
+  DJANGO_SECURE_HTTPS: ${DJANGO_SECURE_HTTPS:-true}
+  DJANGO_LOG_LEVEL: ${DJANGO_LOG_LEVEL:-INFO}
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  DB_NAME: ${POSTGRES_DB:-sentinel}
+  DB_USER: ${DB_APP_USER:-sentinel_app}
+  DB_PASSWORD: ${DB_APP_PASSWORD:?is required - run make env}
+  DB_CONN_MAX_AGE: ${DB_CONN_MAX_AGE:-60}
+  DB_STATEMENT_TIMEOUT_MS: ${DB_STATEMENT_TIMEOUT_MS:-5000}
+  CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:?is required - run make env}@redis:6379/0
+  REDIS_CACHE_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+  JWT_SIGNING_KEY: ${JWT_SIGNING_KEY:?is required - run make env}
+  JWT_ACCESS_TOKEN_LIFETIME_MINUTES: ${JWT_ACCESS_TOKEN_LIFETIME_MINUTES:-15}
+  JWT_REFRESH_TOKEN_LIFETIME_HOURS: ${JWT_REFRESH_TOKEN_LIFETIME_HOURS:-24}
+  CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173}
+  METRICS_AUTH_TOKEN: ${METRICS_AUTH_TOKEN:?is required - run make env}
+  API_MAX_REQUEST_BYTES: ${API_MAX_REQUEST_BYTES:-2621440}
+  AUDIT_BULK_MAX_EVENTS: ${AUDIT_BULK_MAX_EVENTS:-500}
+  AUDIT_METADATA_MAX_BYTES: ${AUDIT_METADATA_MAX_BYTES:-8192}
+  WEBHOOK_SECRET_ENCRYPTION_KEYS: ${WEBHOOK_SECRET_ENCRYPTION_KEYS:?is required - run make env}
+  WEBHOOK_ALLOW_INSECURE_DESTINATIONS: ${WEBHOOK_ALLOW_INSECURE_DESTINATIONS:-false}
+  WEBHOOK_CONNECT_TIMEOUT_SECONDS: ${WEBHOOK_CONNECT_TIMEOUT_SECONDS:-3}
+  WEBHOOK_READ_TIMEOUT_SECONDS: ${WEBHOOK_READ_TIMEOUT_SECONDS:-5}
+  WEBHOOK_MAX_RETRIES: ${WEBHOOK_MAX_RETRIES:-5}
+  THROTTLE_RATE_ANON: ${THROTTLE_RATE_ANON:-30/minute}
+  THROTTLE_RATE_USER: ${THROTTLE_RATE_USER:-600/minute}
+  THROTTLE_RATE_AUTH: ${THROTTLE_RATE_AUTH:-10/minute}
+  THROTTLE_RATE_INGEST: ${THROTTLE_RATE_INGEST:-1200/minute}
+
+# Shared settings for every container that runs the application image.
+x-app-service: &app-service
+  image: ${SENTINEL_IMAGE:-sentinel-iam-audit-service:local}
+  build:
+    context: .
+    target: runtime
+    args:
+      PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+  environment: *app-environment
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+  stop_grace_period: 30s
+  logging: *default-logging
+  networks: [backend]
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16.15-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-sentinel}
+      POSTGRES_USER: ${POSTGRES_SUPERUSER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?is required - run make env}
+      # scram-sha-256 for every TCP connection, including loopback inside the container
+      # (the image default trusts 127.0.0.1). The Unix socket stays trust for admin use.
+      POSTGRES_INITDB_ARGS: --data-checksums --auth-host=scram-sha-256 --auth-local=trust
+      DB_OWNER_USER: ${DB_OWNER_USER:-sentinel_owner}
+      DB_OWNER_PASSWORD: ${DB_OWNER_PASSWORD:?is required - run make env}
+      DB_APP_USER: ${DB_APP_USER:-sentinel_app}
+      DB_APP_PASSWORD: ${DB_APP_PASSWORD:?is required - run make env}
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=top
+      - -c
+      - log_min_duration_statement=500
+      - -c
+      - max_connections=100
+      - -c
+      - shared_buffers=256MB
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # --host forces TCP, so the check fails while initdb runs its socket-only server.
+      test: ["CMD-SHELL", "pg_isready --host=127.0.0.1 --username=\"$${POSTGRES_USER}\" --dbname=\"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    shm_size: 256m
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+    networks: [backend]
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1g
+
+  redis:
+    image: redis:7.4.11-alpine
+    # Broker and cache only: no persistence. Lost tasks are re-dispatched from the
+    # PostgreSQL transactional outbox, which remains the source of truth.
+    command:
+      - redis-server
+      - --requirepass
+      - ${REDIS_PASSWORD:?is required - run make env}
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - noeviction
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    user: "999:1000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+    networks: [backend]
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 320m
+
+  migrate:
+    <<: *app-service
+    command: ["python", "manage.py", "migrate", "--noinput"]
+    environment:
+      <<: *app-environment
+      DB_USER: ${DB_OWNER_USER:-sentinel_owner}
+      DB_PASSWORD: ${DB_OWNER_PASSWORD:?is required - run make env}
+    restart: "no"
+    healthcheck:
+      disable: true
+
+  web:
+    <<: *app-service
+    environment:
+      <<: *app-environment
+      GUNICORN_WORKERS: ${GUNICORN_WORKERS:-3}
+      GUNICORN_THREADS: ${GUNICORN_THREADS:-4}
+      GUNICORN_TIMEOUT: ${GUNICORN_TIMEOUT:-30}
+      GUNICORN_FORWARDED_ALLOW_IPS: ${GUNICORN_FORWARDED_ALLOW_IPS:-127.0.0.1}
+    ports:
+      - "${SENTINEL_BIND_ADDRESS:-127.0.0.1}:${SENTINEL_HTTP_PORT:-8000}:8000"
+    networks: [backend, edge]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 768m
+
+  worker:
+    <<: *app-service
+    command:
+      - celery
+      - --app
+      - config
+      - worker
+      - --loglevel
+      - INFO
+      - --concurrency
+      - ${CELERY_WORKER_CONCURRENCY:-2}
+      - --hostname
+      - worker@%h
+      - --without-gossip
+      - --without-mingle
+    healthcheck:
+      test: ["CMD-SHELL", "celery --app config inspect ping --destination \"worker@$${HOSTNAME}\" --timeout 5 > /dev/null"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
+    networks: [backend, egress]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512m
+
+  beat:
+    <<: *app-service
+    command:
+      - celery
+      - --app
+      - config
+      - beat
+      - --loglevel
+      - INFO
+      - --schedule
+      - /tmp/celerybeat-schedule
+    healthcheck:
+      disable: true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256m
+
+  # Developer toolbox: tests, linters, type checks and migrations against the
+  # real PostgreSQL and Redis containers. Started only with --profile dev.
+  dev:
+    image: sentinel-iam-audit-service:dev
+    build:
+      context: .
+      target: dev
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+    profiles: [dev]
+    user: "${DEV_UID:-10001}:${DEV_GID:-10001}"
+    working_dir: /app
+    volumes:
+      - .:/app
+    environment:
+      <<: *app-environment
+      # The test runner creates and drops its own test database.
+      DB_USER: ${POSTGRES_SUPERUSER:-postgres}
+      DB_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?is required - run make env}
+      DJANGO_SECURE_HTTPS: "false"
+      HOME: /tmp
+    networks: [backend, egress]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+networks:
+  backend:
+    internal: true
+  edge: {}
+  egress: {}
+
+volumes:
+  postgres-data:

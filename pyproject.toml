@@ -1,0 +1,98 @@
+[project]
+name = "sentinel-iam-audit-service"
+version = "0.1.0"
+description = "Headless IAM, RBAC and append-only security audit log microservice with signed webhooks."
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Ali Fakhrabadi" }]
+requires-python = ">=3.12,<3.13"
+# Dependencies are declared in requirements.in and hash-locked in requirements.txt.
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["**/migrations/*.py"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",  # pycodestyle
+    "F",       # pyflakes
+    "I",       # isort
+    "N",       # pep8-naming
+    "UP",      # pyupgrade
+    "B",       # bugbear
+    "S",       # bandit (security)
+    "DJ",      # django
+    "DTZ",     # timezone-aware datetimes
+    "C4",      # comprehensions
+    "SIM",     # simplify
+    "RET",     # return statements
+    "PIE",
+    "PT",      # pytest style
+    "T20",     # no print() in application code
+    "ERA",     # no commented-out code
+    "PERF",
+    "PL",      # pylint
+    "RUF",
+]
+ignore = [
+    "RUF012",   # Django/DRF class attributes (Meta.fields, permission_classes) are idiomatic
+    "PLR0913",  # explicit keyword-only service signatures are preferred over parameter objects
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "PLR2004", "ARG001"]
+"scripts/**" = ["T20"]
+"manage.py" = ["T20"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["apps", "config"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["mypy_django_plugin.main", "mypy_drf_plugin.main"]
+exclude = ["/migrations/"]
+check_untyped_defs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+no_implicit_optional = true
+strict_equality = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = ["django_prometheus.*", "factory.*", "corsheaders.*", "drf_spectacular_sidecar.*"]
+ignore_missing_imports = true
+
+[tool.django-stubs]
+django_settings_module = "config.settings"
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+markers = [
+    "integration: exercises PostgreSQL, Redis or HTTP boundaries end to end",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["apps", "config"]
+omit = ["*/migrations/*", "config/asgi.py", "config/wsgi.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]

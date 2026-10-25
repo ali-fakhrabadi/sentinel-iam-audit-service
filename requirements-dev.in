@@ -1,0 +1,23 @@
+# Development, test and CI tooling. Runtime versions are constrained to the
+# locked requirements.txt so tests run against exactly what ships in the image.
+# Edit this file, then run `make lock`.
+
+-c requirements.txt
+-r requirements.in
+
+pytest==9.1.1
+pytest-django==4.14.0
+pytest-cov==7.1.0
+factory-boy==3.3.3
+time-machine==3.5.1
+respx==0.23.1
+
+ruff==0.17.2
+
+# djangorestframework-stubs 3.18 supports mypy <2.4.
+mypy==2.3.1
+django-stubs==6.1.2
+djangorestframework-stubs==3.18.1
+celery-types==0.26.0
+
+pip-audit==2.10.1

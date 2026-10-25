@@ -1,0 +1,241 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Third-party actions are pinned to full commit SHAs (tag in the trailing comment)
+# so a moved or compromised tag cannot change what runs in this pipeline.
+
+env:
+  PYTHON_VERSION: "3.12"
+  # CI-only, non-secret values. Real secrets are injected at deploy time.
+  DJANGO_SETTINGS_MODULE: config.settings
+  DJANGO_SECRET_KEY: ci-only-insecure-django-secret-key-0123456789abcdefghijklmnop
+  DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,testserver
+  DJANGO_SECURE_HTTPS: "false"
+  JWT_SIGNING_KEY: ci-only-insecure-jwt-signing-key-0123456789abcdefghijklmnopqrs
+  METRICS_AUTH_TOKEN: ci-only-metrics-token
+  WEBHOOK_SECRET_ENCRYPTION_KEYS: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+  DB_HOST: localhost
+  DB_PORT: "5432"
+  DB_NAME: sentinel
+  DB_USER: postgres
+  DB_PASSWORD: postgres
+  CELERY_BROKER_URL: redis://localhost:6379/0
+  REDIS_CACHE_URL: redis://localhost:6379/1
+
+jobs:
+  quality:
+    name: Lint, format and type check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install locked dependencies (hash-verified)
+        run: |
+          python -m pip install --require-hashes --no-deps -r requirements-dev.txt
+          python -m pip check
+
+      - name: Ruff lint
+        run: ruff check --output-format=github .
+
+      - name: Ruff format
+        run: ruff format --check .
+
+      - name: Mypy
+        run: mypy .
+
+  test:
+    name: Tests (PostgreSQL 16, Redis 7)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16.15-alpine
+        env:
+          POSTGRES_DB: sentinel
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --host=127.0.0.1 --username=postgres --dbname=sentinel"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+      redis:
+        image: redis:7.4.11-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install locked dependencies (hash-verified)
+        run: |
+          python -m pip install --require-hashes --no-deps -r requirements-dev.txt
+          python -m pip check
+
+      - name: Django system checks
+        run: python manage.py check --fail-level WARNING
+
+      - name: Django deployment checks (production security settings)
+        env:
+          DJANGO_SECURE_HTTPS: "true"
+        run: python manage.py check --deploy --fail-level WARNING
+
+      - name: Migration drift check
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Apply migrations
+        run: python manage.py migrate --noinput
+
+      - name: Validate OpenAPI schema
+        run: python manage.py spectacular --validate --fail-on-warn --file openapi.yaml
+
+      - name: Run tests with coverage
+        run: >-
+          pytest --cov --cov-report=term-missing:skip-covered
+          --cov-report=xml --junitxml=reports/junit.xml
+
+      - name: Upload test reports and OpenAPI schema
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-reports
+          path: |
+            coverage.xml
+            reports/junit.xml
+            openapi.yaml
+          if-no-files-found: ignore
+          retention-days: 14
+
+  dependency-audit:
+    name: Dependency vulnerability audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install locked dependencies (hash-verified)
+        run: python -m pip install --require-hashes --no-deps -r requirements-dev.txt
+
+      - name: pip-audit (runtime lock file)
+        run: pip-audit --requirement requirements.txt --require-hashes --disable-pip --strict
+
+  container:
+    name: Container build, scan and publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: [quality, test, dependency-audit]
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}
+      LOCAL_TAG: sentinel-iam-audit-service:ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate docker-compose.yml
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+          docker compose --profile dev config --quiet
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=sha
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build runtime image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: runtime
+          load: true
+          push: false
+          tags: |
+            ${{ steps.meta.outputs.tags }}
+            ${{ env.LOCAL_TAG }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test (image imports and passes Django checks)
+        run: >-
+          docker run --rm
+          -e DJANGO_SECRET_KEY -e JWT_SIGNING_KEY -e METRICS_AUTH_TOKEN
+          -e WEBHOOK_SECRET_ENCRYPTION_KEYS -e DJANGO_ALLOWED_HOSTS
+          "${LOCAL_TAG}" python manage.py check --fail-level WARNING
+
+      - name: Scan image for HIGH/CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.76.1
+          scan-type: image
+          image-ref: ${{ env.LOCAL_TAG }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish image to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: docker push --all-tags "${IMAGE}"

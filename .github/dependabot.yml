@@ -1,0 +1,28 @@
+# Weekly update PRs for pinned GitHub Actions (SHA pins) and container images.
+# Python dependencies are upgraded deliberately with `make lock`, and CI's
+# pip-audit job flags known vulnerabilities in the lock file on every push.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build

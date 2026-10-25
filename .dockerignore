@@ -1,0 +1,29 @@
+# The build context only needs application code and lock files.
+# Everything else is excluded to keep images small and secrets out of layers.
+.git
+.github
+.env
+.env.*
+!.env.example
+**/__pycache__
+**/*.py[cod]
+.venv
+venv
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+coverage.xml
+htmlcov
+reports
+staticfiles
+media
+openapi.yaml
+loadtest
+docs
+tests
+scripts
+docker
+*.md
+docker-compose*.yml
+Makefile
