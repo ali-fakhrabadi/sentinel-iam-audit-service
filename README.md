@@ -5,8 +5,9 @@ append-only security audit logging microservice with HMAC-signed webhooks. It is
 API-first for React / Next.js / TypeScript SPAs and machine-to-machine clients.
 
 > **Status:** under active development. The foundation (containers, database roles,
-> dependency locking and CI) is in place; the application modules are being added
-> phase by phase. This README is expanded with full API documentation as features land.
+> dependency locking, CI) and the Django platform layer (structured logging, RFC 7807
+> errors, probes, metrics, OpenAPI) are in place; the IAM, audit and webhook modules
+> are being added phase by phase.
 
 ## Planned capabilities
 
@@ -33,6 +34,47 @@ Gunicorn · Docker Compose · GitHub Actions
 | Metrics | Gunicorn is configured for Prometheus multiprocess mode, so `/metrics` can aggregate all workers |
 | CI pipeline | Ruff, mypy, Django checks, migration drift, OpenAPI validation, pytest on real PostgreSQL/Redis, pip-audit, Trivy image scan, GHCR publish |
 | Supply chain | GitHub Actions pinned to commit SHAs; Dependabot for actions and images |
+
+## Operational endpoints
+
+| Endpoint | Purpose | Access |
+|---|---|---|
+| `GET /health/live/` | Liveness: the process can serve requests (no dependency checks) | Public |
+| `GET /health/ready/` | Readiness: PostgreSQL and Redis reachable, bounded timeouts; 503 otherwise | Public |
+| `GET /metrics` | Prometheus metrics aggregated across Gunicorn workers | `Authorization: Bearer $METRICS_AUTH_TOKEN` |
+| `GET /api/schema/` | OpenAPI 3 schema (`?format=json` for JSON) | Public |
+| `GET /api/docs/` | Swagger UI (self-hosted assets, no CDN) | Public |
+| `GET /api/redoc/` | ReDoc | Public |
+
+Probes and metrics are exempt from the HTTPS redirect and from CORS, and they never
+return hostnames, connection strings or error messages.
+
+## Error format
+
+Every error is an RFC 7807 problem document served as `application/problem+json`:
+
+```json
+{
+  "type": "urn:sentinel:problem:validation-error",
+  "title": "Request validation failed",
+  "status": 400,
+  "detail": "One or more fields are invalid.",
+  "instance": "/api/v1/audit/events/bulk/",
+  "request_id": "9b2f7c0e4d1a4c3e8f6b5a2d1c0e9f8a",
+  "errors": [{ "field": "events.3.severity", "message": "\"BOGUS\" is not a valid choice.", "code": "invalid_choice" }]
+}
+```
+
+Every response carries `X-Request-ID` (a caller-supplied value is kept if it is safe).
+The same ID appears in the JSON logs, so a client-reported error can be traced end to end.
+
+## Logging
+
+All processes (Gunicorn, Django, Celery) write one JSON object per line to stdout with
+`timestamp`, `level`, `logger`, `message` and `request_id`. Values under sensitive keys
+(`password`, `authorization`, `token`, `api_key`, `secret`, ...) and credential-shaped
+strings (JWTs, `sntl_` API keys, bearer tokens) are redacted before they are written.
+Query strings are never logged.
 
 ## Quick start
 

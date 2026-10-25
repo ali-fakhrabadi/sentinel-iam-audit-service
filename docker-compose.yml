@@ -29,6 +29,8 @@ x-app-environment: &app-environment
   DJANGO_CSRF_TRUSTED_ORIGINS: ${DJANGO_CSRF_TRUSTED_ORIGINS:-}
   DJANGO_SECURE_HTTPS: ${DJANGO_SECURE_HTTPS:-true}
   DJANGO_LOG_LEVEL: ${DJANGO_LOG_LEVEL:-INFO}
+  DJANGO_ADMIN_URL: ${DJANGO_ADMIN_URL:-admin/}
+  API_TRUSTED_PROXY_COUNT: ${API_TRUSTED_PROXY_COUNT:-0}
   DB_HOST: postgres
   DB_PORT: "5432"
   DB_NAME: ${POSTGRES_DB:-sentinel}
@@ -170,6 +172,8 @@ services:
       <<: *app-environment
       DB_USER: ${DB_OWNER_USER:-sentinel_owner}
       DB_PASSWORD: ${DB_OWNER_PASSWORD:?is required - run make env}
+      # Index builds and data migrations may legitimately exceed the request timeout.
+      DB_STATEMENT_TIMEOUT_MS: "0"
     restart: "no"
     healthcheck:
       disable: true
@@ -244,8 +248,16 @@ services:
       - INFO
       - --schedule
       - /tmp/celerybeat-schedule
+      - --pidfile
+      - /tmp/celerybeat.pid
     healthcheck:
-      disable: true
+      # Beat writes its pidfile once the scheduler has started; the check confirms
+      # that process is still alive.
+      test: ["CMD", "python", "-c", "import os; os.kill(int(open('/tmp/celerybeat.pid').read()), 0)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     depends_on:
       migrate:
         condition: service_completed_successfully

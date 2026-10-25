@@ -80,6 +80,10 @@ django_settings_module = "config.settings"
 DJANGO_SETTINGS_MODULE = "config.settings"
 testpaths = ["tests"]
 addopts = "-ra --strict-markers --strict-config"
+filterwarnings = [
+    # Tests do not run collectstatic; WhiteNoise warns that STATIC_ROOT is missing.
+    "ignore:No directory at:UserWarning",
+]
 markers = [
     "integration: exercises PostgreSQL, Redis or HTTP boundaries end to end",
 ]
