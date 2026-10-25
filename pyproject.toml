@@ -70,7 +70,13 @@ module = ["tests.*"]
 disallow_untyped_defs = false
 
 [[tool.mypy.overrides]]
-module = ["django_prometheus.*", "factory.*", "corsheaders.*", "drf_spectacular_sidecar.*"]
+module = [
+    "django_prometheus.*",
+    "django_filters.*",
+    "factory.*",
+    "corsheaders.*",
+    "drf_spectacular_sidecar.*",
+]
 ignore_missing_imports = true
 
 [tool.django-stubs]

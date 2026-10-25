@@ -32,13 +32,18 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django.contrib.postgres",
     "corsheaders",
     "rest_framework",
+    "rest_framework_simplejwt.token_blacklist",
     "django_filters",
     "drf_spectacular",
     "drf_spectacular_sidecar",
     "django_prometheus",
+    "apps.accounts",
 ]
+
+AUTH_USER_MODEL = "accounts.User"
 
 MIDDLEWARE = [
     # CORS must run first so preflight and error responses carry CORS headers.
@@ -148,6 +153,13 @@ CELERY_BEAT_SCHEDULE: dict[str, dict[str, object]] = {}
 # --------------------------------------------------------------------------------------
 # Authentication & passwords
 # --------------------------------------------------------------------------------------
+PASSWORD_HASHERS = [
+    "django.contrib.auth.hashers.Argon2PasswordHasher",
+    # Fallbacks only verify (and transparently upgrade) hashes created elsewhere.
+    "django.contrib.auth.hashers.PBKDF2PasswordHasher",
+    "django.contrib.auth.hashers.ScryptPasswordHasher",
+]
+
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {
@@ -165,8 +177,16 @@ SIMPLE_JWT = {
     "REFRESH_TOKEN_LIFETIME": timedelta(
         hours=env_int("JWT_REFRESH_TOKEN_LIFETIME_HOURS", default=24, minimum=1, maximum=720)
     ),
+    # Every refresh returns a new refresh token and blacklists the old one, so a
+    # stolen refresh token is detected as soon as either party uses it again.
     "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
+    # Access tokens embed a hash of the password; changing it revokes them at once.
+    "CHECK_REVOKE_TOKEN": True,
+    "REVOKE_TOKEN_CLAIM": "hash_password",
+    "CHECK_USER_IS_ACTIVE": True,
     "UPDATE_LAST_LOGIN": True,
+    "USER_ID_FIELD": "id",
     "ALGORITHM": "HS256",
     # Separate from SECRET_KEY so each can be rotated independently.
     "SIGNING_KEY": env_required("JWT_SIGNING_KEY"),
@@ -205,10 +225,19 @@ REST_FRAMEWORK = {
     # 0 = identify clients by REMOTE_ADDR. Set to the number of trusted proxies in
     # front of the service; leaving it unset would let clients spoof X-Forwarded-For.
     "NUM_PROXIES": env_int("API_TRUSTED_PROXY_COUNT", default=0, minimum=0),
-    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "DEFAULT_SCHEMA_CLASS": "config.openapi.ProblemAutoSchema",
     "EXCEPTION_HANDLER": "config.exceptions.problem_exception_handler",
     "TEST_REQUEST_DEFAULT_FORMAT": "json",
 }
+
+API_KEY_DEFAULT_LIFETIME_DAYS = env_int("API_KEY_DEFAULT_LIFETIME_DAYS", default=90, minimum=1)
+API_KEY_MAX_LIFETIME_DAYS = env_int(
+    "API_KEY_MAX_LIFETIME_DAYS", default=365, minimum=API_KEY_DEFAULT_LIFETIME_DAYS
+)
+# last_used_at is written at most this often per key, to avoid a write per request.
+API_KEY_LAST_USED_UPDATE_SECONDS = env_int(
+    "API_KEY_LAST_USED_UPDATE_SECONDS", default=60, minimum=1
+)
 
 API_MAX_REQUEST_BYTES = env_int("API_MAX_REQUEST_BYTES", default=2_621_440, minimum=1024)
 DATA_UPLOAD_MAX_MEMORY_SIZE = API_MAX_REQUEST_BYTES
@@ -247,6 +276,11 @@ SPECTACULAR_SETTINGS = {
         "DependencyStatusEnum": ["ok", "error"],
     },
     "TAGS": [
+        {"name": "Auth", "description": "JWT login, rotation and logout; API key introspection"},
+        {"name": "Current user", "description": "Profile, roles and permissions of the caller"},
+        {"name": "Users", "description": "User administration and role assignment"},
+        {"name": "Roles", "description": "RBAC roles and the permission catalog"},
+        {"name": "Service accounts", "description": "Machine principals and their API keys"},
         {"name": "Health", "description": "Liveness and readiness probes"},
     ],
 }

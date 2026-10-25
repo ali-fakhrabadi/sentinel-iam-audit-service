@@ -24,9 +24,11 @@ from typing import Any
 
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from django.core.exceptions import RequestDataTooBig, SuspiciousOperation
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.http import Http404, HttpRequest, JsonResponse
 from rest_framework import exceptions, status
 from rest_framework.response import Response
+from rest_framework.serializers import as_serializer_error
 from rest_framework.views import exception_handler as drf_exception_handler
 
 from config.logging import get_request_id
@@ -50,6 +52,7 @@ _PROBLEM_TYPES: dict[str, tuple[str, str]] = {
     "unsupported_media_type": ("unsupported-media-type", "Unsupported media type"),
     "throttled": ("rate-limited", "Too many requests"),
     "payload_too_large": ("payload-too-large", "Request body too large"),
+    "conflict": ("conflict", "Conflict with the current state of the resource"),
     "bad_request": ("bad-request", "Bad request"),
     "server_error": ("internal-error", "Internal server error"),
 }
@@ -65,6 +68,14 @@ class BadRequest(exceptions.APIException):
     status_code = status.HTTP_400_BAD_REQUEST
     default_detail = "The request could not be processed."
     default_code = "bad_request"
+
+
+class Conflict(exceptions.APIException):
+    """The request is valid but clashes with existing state (duplicates, in-use objects)."""
+
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "The request conflicts with the current state of the resource."
+    default_code = "conflict"
 
 
 def build_problem(
@@ -127,7 +138,13 @@ def flatten_validation_errors(detail: Any, path: str = "") -> list[dict[str, str
 
 
 def _translate_django_exception(exc: Exception) -> Exception:
-    """Map Django exceptions that DRF does not handle onto API exceptions."""
+    """Map Django exceptions that DRF does not handle onto API exceptions.
+
+    Services raise Django's ValidationError so they stay independent of DRF; it is
+    converted here into the same field-level problem response as serializer errors.
+    """
+    if isinstance(exc, DjangoValidationError):
+        return exceptions.ValidationError(detail=as_serializer_error(exc))
     if isinstance(exc, RequestDataTooBig):
         return PayloadTooLarge()
     if isinstance(exc, SuspiciousOperation):
@@ -208,7 +225,9 @@ def _primary_detail(exc: Exception) -> str:
     if isinstance(exc, Http404):
         return "The requested resource was not found."
     if isinstance(exc, DjangoPermissionDenied):
-        return "You do not have permission to perform this action."
+        # Services raise PermissionDenied with deliberate, user-facing explanations.
+        message = str(exc)
+        return message or "You do not have permission to perform this action."
     return "The request could not be processed."
 
 

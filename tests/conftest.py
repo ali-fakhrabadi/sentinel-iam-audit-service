@@ -7,20 +7,26 @@ Tests run against the real PostgreSQL and Redis configured through the environme
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator, Sequence
+from typing import Any
 
 import pytest
 from pytest_django import Settings
 from rest_framework.test import APIClient
+from rest_framework_simplejwt.tokens import RefreshToken
 
+from apps.accounts import services
+from apps.accounts.models import Permission, Role, ServiceAccount, User
 from config.logging import request_id_var
+from tests.factories import create_service_account, create_user
 
 
 @pytest.fixture(autouse=True)
 def _isolated_settings(settings: Settings) -> None:
-    """Give every test its own cache and a static storage that needs no collectstatic.
+    """Per-test cache, static storage without collectstatic, and a fast password hasher.
 
     A per-test in-memory cache keeps DRF throttle counters from leaking between tests.
+    Argon2 is the production hasher (see test_settings); MD5 only keeps tests fast.
     """
     settings.CACHES = {
         "default": {
@@ -32,6 +38,7 @@ def _isolated_settings(settings: Settings) -> None:
         **settings.STORAGES,
         "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
     }
+    settings.PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 
 
 @pytest.fixture(autouse=True)
@@ -44,3 +51,65 @@ def _clean_request_context() -> Iterator[None]:
 @pytest.fixture
 def api_client() -> APIClient:
     return APIClient()
+
+
+MakeUser = Callable[..., User]
+
+
+@pytest.fixture
+def make_user(db: None) -> MakeUser:
+    def _make(*, roles: Sequence[str] = (), **fields: Any) -> User:
+        return create_user(roles=roles, **fields)
+
+    return _make
+
+
+@pytest.fixture
+def admin_user(make_user: MakeUser) -> User:
+    return make_user(roles=["admin"], email="admin@example.test")
+
+
+@pytest.fixture
+def superuser(db: None) -> User:
+    return User.objects.create_superuser("root@example.test", "Root-Password-12345")
+
+
+@pytest.fixture
+def client_for() -> Callable[[User], APIClient]:
+    """An APIClient authenticated with a fresh JWT access token for ``user``."""
+
+    def _client(user: User) -> APIClient:
+        client = APIClient()
+        token = RefreshToken.for_user(user)
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {token.access_token}")
+        return client
+
+    return _client
+
+
+@pytest.fixture
+def make_role(db: None) -> Callable[..., Role]:
+    def _make(name: str, permissions: Sequence[str]) -> Role:
+        role = Role.objects.create(name=name, description="test role")
+        role.permissions.set(Permission.objects.filter(code__in=permissions))
+        return role
+
+    return _make
+
+
+@pytest.fixture
+def issue_key(superuser: User) -> Callable[..., tuple[ServiceAccount, services.IssuedAPIKey]]:
+    """Create a service account and an API key for it; returns both."""
+
+    def _issue(
+        scopes: Sequence[str] = ("audit:write",),
+        service_account: ServiceAccount | None = None,
+        **kwargs: Any,
+    ) -> tuple[ServiceAccount, services.IssuedAPIKey]:
+        account = service_account or create_service_account()
+        issued = services.api_key_issue(
+            actor=superuser, service_account=account, name="test key", scopes=scopes, **kwargs
+        )
+        return account, issued
+
+    return _issue

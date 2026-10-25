@@ -21,3 +21,5 @@ gunicorn==26.2.0
 whitenoise==6.12.0
 httpx==0.28.1
 cryptography==50.0.2
+# Argon2id password hashing (Django's recommended hasher, OWASP first choice).
+argon2-cffi==25.1.0

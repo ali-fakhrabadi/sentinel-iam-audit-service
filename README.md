@@ -35,6 +35,29 @@ Gunicorn · Docker Compose · GitHub Actions
 | CI pipeline | Ruff, mypy, Django checks, migration drift, OpenAPI validation, pytest on real PostgreSQL/Redis, pip-audit, Trivy image scan, GHCR publish |
 | Supply chain | GitHub Actions pinned to commit SHAs; Dependabot for actions and images |
 
+## Authentication and authorization
+
+| Caller | Credential | Used on |
+|---|---|---|
+| People (SPA, CLI) | JWT access token: `Authorization: Bearer <access>` | All `/api/v1/accounts/*` endpoints |
+| Machines (log shippers, CI, SIEM connectors) | Service-account API key: `X-API-Key: sntl_<prefix>_<secret>` | Machine endpoints only (ingestion, introspection) |
+
+The two credential types never unlock each other's endpoints. Authentication only
+establishes identity; every endpoint then checks permission codes (`resource:action`):
+
+* **Users** receive codes through roles. Built-in roles: `admin`, `iam_manager`,
+  `security_analyst`, `auditor`; custom roles can be added.
+* **API keys** carry explicit scopes, a mandatory expiry (90 days by default, 365 at most)
+  and are stored as SHA-256 digests. The raw key is returned once, with `Cache-Control: no-store`.
+* **No privilege escalation:** you can only grant, revoke or manage permissions you hold
+  yourself, cannot change your own roles, and only superusers manage superusers.
+* **Token lifecycle:** 15-minute access tokens, rotating single-use refresh tokens, logout
+  blacklisting, and instant revocation of all tokens on password change or deactivation.
+* Passwords are hashed with Argon2id; login and password endpoints are rate limited.
+
+`GET /api/v1/accounts/me/` returns the profile, active role names and the sorted,
+de-duplicated permission codes a frontend needs to render role-based UI.
+
 ## Operational endpoints
 
 | Endpoint | Purpose | Access |
