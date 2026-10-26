@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Sequence
 from typing import Any, cast
 
 import factory
+from django.utils import timezone
 
 from apps.accounts.models import Role, ServiceAccount, User, UserRole
+from apps.audit_logs.models import AuditEvent
+from apps.webhooks.crypto import encrypt_secret, generate_signing_secret
+from apps.webhooks.models import WebhookEndpoint
 
 DEFAULT_PASSWORD = "Correct-Horse-Battery-Staple-9"
 
@@ -44,3 +49,35 @@ def create_user(*, roles: Sequence[str] = (), **fields: Any) -> User:
 
 def create_service_account(**fields: Any) -> ServiceAccount:
     return cast(ServiceAccount, ServiceAccountFactory(**fields))
+
+
+def create_event(*, producer: ServiceAccount | User, **fields: Any) -> AuditEvent:
+    """Insert an audit event directly (no outbox), e.g. with a chosen created_at."""
+    now = timezone.now()
+    values: dict[str, Any] = {
+        "action": "auth.login.failed",
+        "resource_type": "iam.user",
+        "severity": "INFO",
+        "received_at": now,
+        "created_at": now,
+        "metadata": {},
+    }
+    values.update(fields)
+    if isinstance(producer, ServiceAccount):
+        values["producer_service_account"] = producer
+    else:
+        values["producer_user"] = producer
+    return AuditEvent.objects.create(**values)
+
+
+def create_endpoint(**fields: Any) -> tuple[WebhookEndpoint, str]:
+    """Insert a webhook endpoint directly (no audit event); returns it with its secret."""
+    secret = generate_signing_secret()
+    values: dict[str, Any] = {
+        "name": f"endpoint-{uuid.uuid4().hex[:8]}",
+        "url": "https://hooks.example.com/sentinel",
+        "min_severity": "WARN",
+        "secret_ciphertext": encrypt_secret(secret),
+    }
+    values.update(fields)
+    return WebhookEndpoint.objects.create(**values), secret

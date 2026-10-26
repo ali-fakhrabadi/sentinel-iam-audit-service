@@ -22,7 +22,21 @@ from apps.accounts.permissions import (
 
 
 class _View:
+    """A view offering GET, POST and DELETE, but only mapping GET and POST."""
+
     required_permissions = {"GET": ("audit:read",), "POST": ("audit:write",)}
+
+    def get(self) -> None: ...
+
+    def post(self) -> None: ...
+
+    def delete(self) -> None: ...
+
+
+class _ReadOnlyView:
+    required_permissions = {"GET": ("audit:read",)}
+
+    def get(self) -> None: ...
 
 
 def _request(method: str = "GET", *, user: Any = None, auth: Any = None) -> Request:
@@ -55,6 +69,13 @@ def test_views_without_a_mapping_deny_everything() -> None:
 def test_methods_missing_from_the_mapping_are_denied() -> None:
     request = _request("DELETE", auth=_api_key(["audit:read", "audit:write"]))
     assert HasRequiredPermissions().has_permission(request, _View()) is False
+
+
+def test_methods_the_view_does_not_implement_fall_through_to_405() -> None:
+    # Permission checks run before handler lookup; letting them pass for methods the
+    # view lacks makes DRF answer 405 instead of a misleading 403.
+    request = _request("PUT", auth=_api_key([]))
+    assert HasRequiredPermissions().has_permission(request, _ReadOnlyView()) is True
 
 
 def test_head_is_authorized_like_get() -> None:

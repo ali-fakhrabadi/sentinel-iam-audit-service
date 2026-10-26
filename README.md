@@ -58,6 +58,81 @@ establishes identity; every endpoint then checks permission codes (`resource:act
 `GET /api/v1/accounts/me/` returns the profile, active role names and the sorted,
 de-duplicated permission codes a frontend needs to render role-based UI.
 
+## Audit events
+
+`POST /api/v1/audit/events/bulk/` (API key with `audit:write`) ingests up to 500 events:
+
+* every item is validated on its own; invalid items come back as `rejected` with field errors;
+* all valid items are stored in **one** transaction. A `503` means nothing was stored, so
+  retrying the whole request is always safe;
+* an `idempotency_key` already used by the same service account returns `duplicate` with the
+  original event ID (first write wins);
+* `producer` is set by the server from the API key. `actor_id`, `ip_address`, `user_agent` and
+  `occurred_at` are the producer's claims; `occurred_at` may be at most 5 minutes ahead and
+  30 days old.
+
+`GET /api/v1/audit/events/` filters by actor, action (exact or prefix), resource, severity,
+IP address, time range and metadata containment. Pagination uses an opaque keyset cursor on
+`(created_at, id)`, which stays stable and duplicate-free while new events arrive. Time
+windows default to 30 days and are capped at 90. API keys only see events they produced.
+
+**Append-only:** there is no update or delete API; a PostgreSQL trigger rejects `UPDATE`,
+`DELETE` and `TRUNCATE` for every role; and the runtime role has no `UPDATE`/`DELETE`
+privileges on the table. The only removal path is the retention command run as the schema
+owner: `python manage.py purge_audit_events --older-than-days 365`. This is database-level
+immutability, not cryptographic tamper evidence: a database superuser can still disable
+triggers.
+
+Sentinel audits itself: role grants, API key issuance and revocation, user deactivation,
+password changes and webhook changes are recorded as events in the same transaction.
+
+## Webhooks
+
+WARN and CRITICAL events are written to a transactional outbox together with the event. A
+Celery task drains it right after commit (and every 30 s as a safety net), creating one
+delivery per matching endpoint. Endpoints subscribe by minimum severity and optional action
+prefixes.
+
+```
+POST <your endpoint>
+X-Sentinel-Event-Id:  6f1c2c1e-...        # de-duplication key (delivery is at-least-once)
+X-Sentinel-Timestamp: 1790000000
+X-Sentinel-Signature: t=1790000000,v1=<hex>[,v1=<hex during secret rotation>]
+```
+
+The signature is `HMAC_SHA256(secret, f"{timestamp}.{event_id}." + raw_body)`. Verify it
+on the receiver like this:
+
+```python
+import hashlib, hmac, time
+
+def verify(secret: str, header: str, event_id: str, body: bytes, tolerance: int = 300) -> bool:
+    timestamp, candidates = None, []
+    for item in header.split(","):
+        key, _, value = item.strip().partition("=")
+        if key == "t" and value.isdigit():
+            timestamp = int(value)
+        elif key == "v1":
+            candidates.append(value)
+    if timestamp is None or abs(time.time() - timestamp) > tolerance:  # stale or replayed
+        return False
+    message = f"{timestamp}.{event_id}.".encode() + body
+    expected = hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
+    return any(hmac.compare_digest(expected, candidate) for candidate in candidates)
+```
+
+Retries use exponential backoff with jitter (30 s base, 30 min cap) for timeouts, connection
+errors, `408`, `425`, `429` and `5xx`; other `4xx` and redirects fail permanently. The default
+of 5 retries means at most 6 attempts. Signing secrets are stored encrypted (Fernet); after a
+rotation both secrets sign for 24 hours.
+
+**SSRF protection:** destinations must be `https`, without credentials, and every resolved
+address must be public (loopback, RFC 1918, CGNAT, link-local including `169.254.169.254`,
+multicast and reserved ranges are rejected, also as IPv4-mapped IPv6). The client connects to
+the validated address with SNI set to the host name, so DNS rebinding cannot redirect it, and
+redirects are never followed. Production deployments should still restrict egress at the
+network layer.
+
 ## Operational endpoints
 
 | Endpoint | Purpose | Access |

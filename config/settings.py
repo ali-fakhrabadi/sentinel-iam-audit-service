@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from corsheaders.defaults import default_headers
+from django.core.exceptions import ImproperlyConfigured
 
 from config.env import env_bool, env_int, env_list, env_required, env_str
 
@@ -41,6 +42,8 @@ INSTALLED_APPS = [
     "drf_spectacular_sidecar",
     "django_prometheus",
     "apps.accounts",
+    "apps.audit_logs",
+    "apps.webhooks",
 ]
 
 AUTH_USER_MODEL = "accounts.User"
@@ -148,7 +151,12 @@ CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_BROKER_TRANSPORT_OPTIONS = {"visibility_timeout": 3600}
 CELERY_TIMEZONE = "UTC"
 CELERY_WORKER_HIJACK_ROOT_LOGGER = False
-CELERY_BEAT_SCHEDULE: dict[str, dict[str, object]] = {}
+# Reconciliation loops: the transactional outbox and delivery records in PostgreSQL
+# are the source of truth, so anything Redis lost is picked up here.
+CELERY_BEAT_SCHEDULE: dict[str, dict[str, object]] = {
+    "dispatch-audit-outbox": {"task": "webhooks.dispatch_outbox", "schedule": 30.0},
+    "requeue-due-webhook-deliveries": {"task": "webhooks.requeue_due", "schedule": 60.0},
+}
 
 # --------------------------------------------------------------------------------------
 # Authentication & passwords
@@ -239,6 +247,71 @@ API_KEY_LAST_USED_UPDATE_SECONDS = env_int(
     "API_KEY_LAST_USED_UPDATE_SECONDS", default=60, minimum=1
 )
 
+# --------------------------------------------------------------------------------------
+# Audit log
+# --------------------------------------------------------------------------------------
+# Runtime role whose audit-table UPDATE/DELETE/TRUNCATE privileges migrations revoke.
+DB_APP_ROLE = env_str("DB_APP_ROLE", "sentinel_app")
+AUDIT_BULK_MAX_EVENTS = env_int("AUDIT_BULK_MAX_EVENTS", default=500, minimum=1, maximum=5000)
+AUDIT_METADATA_MAX_BYTES = env_int(
+    "AUDIT_METADATA_MAX_BYTES", default=8192, minimum=256, maximum=65_536
+)
+AUDIT_METADATA_MAX_DEPTH = env_int("AUDIT_METADATA_MAX_DEPTH", default=5, minimum=1, maximum=10)
+AUDIT_QUERY_DEFAULT_RANGE_DAYS = env_int("AUDIT_QUERY_DEFAULT_RANGE_DAYS", default=30, minimum=1)
+AUDIT_QUERY_MAX_RANGE_DAYS = env_int(
+    "AUDIT_QUERY_MAX_RANGE_DAYS", default=90, minimum=AUDIT_QUERY_DEFAULT_RANGE_DAYS
+)
+AUDIT_QUERY_DEFAULT_PAGE_SIZE = 50
+AUDIT_QUERY_MAX_PAGE_SIZE = env_int("AUDIT_QUERY_MAX_PAGE_SIZE", default=500, minimum=10)
+# Trust policy for producer-supplied occurrence times.
+AUDIT_OCCURRED_AT_MAX_FUTURE_SKEW_SECONDS = env_int(
+    "AUDIT_OCCURRED_AT_MAX_FUTURE_SKEW_SECONDS", default=300, minimum=0
+)
+AUDIT_OCCURRED_AT_MAX_AGE_DAYS = env_int("AUDIT_OCCURRED_AT_MAX_AGE_DAYS", default=30, minimum=1)
+# Events at or above this severity are written to the transactional outbox.
+AUDIT_OUTBOX_MIN_SEVERITY = env_str("AUDIT_OUTBOX_MIN_SEVERITY", "WARN").upper()
+if AUDIT_OUTBOX_MIN_SEVERITY not in {"INFO", "WARN", "CRITICAL"}:
+    raise ImproperlyConfigured("AUDIT_OUTBOX_MIN_SEVERITY must be INFO, WARN or CRITICAL.")
+# Celery task name that drains the outbox (the webhooks app implements it).
+AUDIT_OUTBOX_DISPATCH_TASK = "webhooks.dispatch_outbox"
+AUDIT_RETENTION_MIN_DAYS = env_int("AUDIT_RETENTION_MIN_DAYS", default=30, minimum=1)
+
+# --------------------------------------------------------------------------------------
+# Webhooks
+# --------------------------------------------------------------------------------------
+WEBHOOK_SECRET_ENCRYPTION_KEYS = env_list("WEBHOOK_SECRET_ENCRYPTION_KEYS", default=[])
+# The development override only applies with DEBUG on, so a production .env cannot
+# weaken SSRF protection by accident.
+WEBHOOK_ALLOW_INSECURE_DESTINATIONS = DEBUG and env_bool(
+    "WEBHOOK_ALLOW_INSECURE_DESTINATIONS", default=False
+)
+WEBHOOK_CONNECT_TIMEOUT_SECONDS = env_int(
+    "WEBHOOK_CONNECT_TIMEOUT_SECONDS", default=3, minimum=1, maximum=30
+)
+WEBHOOK_READ_TIMEOUT_SECONDS = env_int(
+    "WEBHOOK_READ_TIMEOUT_SECONDS", default=5, minimum=1, maximum=60
+)
+# Retries after the first attempt: 5 retries means at most 6 delivery attempts.
+WEBHOOK_MAX_RETRIES = env_int("WEBHOOK_MAX_RETRIES", default=5, minimum=0, maximum=20)
+WEBHOOK_BACKOFF_BASE_SECONDS = env_int("WEBHOOK_BACKOFF_BASE_SECONDS", default=30, minimum=1)
+# Kept below the broker visibility timeout so delayed retries are not redelivered early.
+WEBHOOK_BACKOFF_MAX_SECONDS = env_int(
+    "WEBHOOK_BACKOFF_MAX_SECONDS", default=1800, minimum=WEBHOOK_BACKOFF_BASE_SECONDS, maximum=3000
+)
+# An attempt older than this is considered abandoned (worker crash) and may be retried.
+WEBHOOK_DELIVERY_LEASE_SECONDS = env_int("WEBHOOK_DELIVERY_LEASE_SECONDS", default=120, minimum=30)
+WEBHOOK_SECRET_ROTATION_GRACE_HOURS = env_int(
+    "WEBHOOK_SECRET_ROTATION_GRACE_HOURS", default=24, minimum=0, maximum=168
+)
+# Advertised replay window for consumers verifying X-Sentinel-Signature.
+WEBHOOK_SIGNATURE_TOLERANCE_SECONDS = 300
+
+# Gauges computed from PostgreSQL at scrape time (outbox backlog, delivery states).
+METRICS_DB_COLLECTORS = [
+    "apps.audit_logs.metrics.OutboxCollector",
+    "apps.webhooks.metrics.DeliveryCollector",
+]
+
 API_MAX_REQUEST_BYTES = env_int("API_MAX_REQUEST_BYTES", default=2_621_440, minimum=1024)
 DATA_UPLOAD_MAX_MEMORY_SIZE = API_MAX_REQUEST_BYTES
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 1000
@@ -274,6 +347,12 @@ SPECTACULAR_SETTINGS = {
         "LivenessStatusEnum": ["ok"],
         "ReadinessStatusEnum": ["ok", "unavailable"],
         "DependencyStatusEnum": ["ok", "error"],
+        "SeverityEnum": "apps.audit_logs.models.Severity",
+        "WebhookMinSeverityEnum": ["WARN", "CRITICAL"],
+        "DeliveryStatusEnum": "apps.webhooks.models.DeliveryStatus",
+        "IngestItemStatusEnum": ["accepted", "duplicate", "rejected"],
+        "SingleIngestStatusEnum": ["accepted", "duplicate"],
+        "ProducerTypeEnum": ["service_account", "user"],
     },
     "TAGS": [
         {"name": "Auth", "description": "JWT login, rotation and logout; API key introspection"},
@@ -281,6 +360,8 @@ SPECTACULAR_SETTINGS = {
         {"name": "Users", "description": "User administration and role assignment"},
         {"name": "Roles", "description": "RBAC roles and the permission catalog"},
         {"name": "Service accounts", "description": "Machine principals and their API keys"},
+        {"name": "Audit events", "description": "Append-only security audit log: ingest and query"},
+        {"name": "Webhooks", "description": "Signed security alerts to external systems"},
         {"name": "Health", "description": "Liveness and readiness probes"},
     ],
 }

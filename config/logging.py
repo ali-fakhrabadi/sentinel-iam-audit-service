@@ -37,6 +37,8 @@ _SECRET_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"),
     # Sentinel API keys: sntl_<8-char prefix>_<secret>.
     re.compile(r"\bsntl_[A-Za-z0-9]{8}_[A-Za-z0-9_-]{16,}"),
+    # Webhook signing secrets: whsec_<secret>.
+    re.compile(r"\bwhsec_[A-Za-z0-9_-]{16,}"),
     # Any bearer credential in free text, e.g. a copied Authorization header.
     re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}"),
 )

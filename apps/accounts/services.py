@@ -6,6 +6,10 @@ excepted). Holding ``roles:manage`` therefore never lets someone hand out ``admi
 
 Services raise Django exceptions (``ValidationError``, ``PermissionDenied``,
 ``Http404``) or ``Conflict``; the API layer renders them as RFC 7807 problems.
+
+Every privilege change is also written to the audit log, in the same transaction,
+through ``apps.audit_logs.services.record_internal_event`` (an intentional
+dependency: accounts -> audit_logs).
 """
 
 from __future__ import annotations
@@ -14,7 +18,7 @@ import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import NoReturn
+from typing import Any, NoReturn
 
 from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
@@ -36,11 +40,31 @@ from apps.accounts.models import (
     UserRole,
     normalize_email_address,
 )
+from apps.audit_logs import services as audit
+from apps.audit_logs.models import Severity
 from config.exceptions import Conflict
 
 logger = logging.getLogger("sentinel.accounts")
 
 _KEY_ISSUE_ATTEMPTS = 3
+
+
+def _audit(
+    actor: User,
+    action: str,
+    resource_type: str,
+    resource_id: object,
+    severity: Severity = Severity.WARN,
+    **metadata: Any,
+) -> None:
+    audit.record_internal_event(
+        actor=actor,
+        action=action,
+        resource_type=resource_type,
+        resource_id=str(resource_id),
+        severity=severity,
+        metadata=metadata,
+    )
 
 
 # --------------------------------------------------------------------------------------
@@ -92,6 +116,7 @@ def _revoke_refresh_tokens(user: User) -> None:
 # --------------------------------------------------------------------------------------
 # Users
 # --------------------------------------------------------------------------------------
+@transaction.atomic
 def user_create(*, actor: User, email: str, password: str, full_name: str = "") -> User:
     user = User(email=normalize_email_address(email), full_name=full_name)
     user.full_clean(exclude=["password"], validate_unique=False)
@@ -105,6 +130,7 @@ def user_create(*, actor: User, email: str, password: str, full_name: str = "") 
     except IntegrityError as exc:  # concurrent registration of the same email
         raise Conflict("A user with this email address already exists.") from exc
     logger.info("User created", extra={"target_user_id": str(user.pk), "actor_id": str(actor.pk)})
+    _audit(actor, "iam.user.created", "iam.user", user.pk, Severity.INFO, email=user.email)
     return user
 
 
@@ -129,6 +155,14 @@ def user_update(
     user.save(update_fields=["full_name", "is_active", "updated_at"])
     if is_active is False:
         _revoke_refresh_tokens(user)
+    _audit(
+        actor,
+        "iam.user.deactivated" if is_active is False else "iam.user.updated",
+        "iam.user",
+        user.pk,
+        Severity.WARN if is_active is not None else Severity.INFO,
+        is_active=user.is_active,
+    )
     logger.info(
         "User updated",
         extra={
@@ -162,11 +196,13 @@ def password_change(*, user: User, current_password: str, new_password: str) -> 
     user.save(update_fields=["password", "updated_at"])
     _revoke_refresh_tokens(user)
     logger.info("Password changed", extra={"target_user_id": str(user.pk)})
+    _audit(user, "iam.password.changed", "iam.user", user.pk, Severity.INFO)
 
 
 # --------------------------------------------------------------------------------------
 # Roles
 # --------------------------------------------------------------------------------------
+@transaction.atomic
 def role_assign(*, actor: User, user: User, role: Role) -> tuple[UserRole, bool]:
     """Grant ``role`` to ``user``. Idempotent: returns ``(assignment, created)``."""
     if user.pk == actor.pk:
@@ -181,9 +217,11 @@ def role_assign(*, actor: User, user: User, role: Role) -> tuple[UserRole, bool]
             "Role assigned",
             extra={"target_user_id": str(user.pk), "role": role.name, "actor_id": str(actor.pk)},
         )
+        _audit(actor, "iam.role.assigned", "iam.user", user.pk, role=role.name)
     return assignment, created
 
 
+@transaction.atomic
 def role_revoke(*, actor: User, user: User, role: Role) -> None:
     if user.pk == actor.pk:
         raise PermissionDenied("You cannot change your own role assignments.")
@@ -196,6 +234,7 @@ def role_revoke(*, actor: User, user: User, role: Role) -> None:
         "Role revoked",
         extra={"target_user_id": str(user.pk), "role": role.name, "actor_id": str(actor.pk)},
     )
+    _audit(actor, "iam.role.revoked", "iam.user", user.pk, role=role.name)
 
 
 @transaction.atomic
@@ -212,6 +251,7 @@ def role_create(
     role.save()
     role.permissions.set(permissions)
     logger.info("Role created", extra={"role": role.name, "actor_id": str(actor.pk)})
+    _audit(actor, "iam.role.created", "iam.role", role.name, permissions=sorted(codes))
     return role
 
 
@@ -240,6 +280,13 @@ def role_update(
         role.permissions.set(permissions)
         role.save(update_fields=["updated_at"])
     logger.info("Role updated", extra={"role": role.name, "actor_id": str(actor.pk)})
+    _audit(
+        actor,
+        "iam.role.updated",
+        "iam.role",
+        role.name,
+        permissions=sorted(selectors.role_permission_codes(role)),
+    )
     return role
 
 
@@ -253,11 +300,13 @@ def role_delete(*, actor: User, role: Role) -> None:
     name = role.name
     role.delete()
     logger.info("Role deleted", extra={"role": name, "actor_id": str(actor.pk)})
+    _audit(actor, "iam.role.deleted", "iam.role", name)
 
 
 # --------------------------------------------------------------------------------------
 # Service accounts and API keys
 # --------------------------------------------------------------------------------------
+@transaction.atomic
 def service_account_create(*, actor: User, name: str, description: str = "") -> ServiceAccount:
     service_account = ServiceAccount(name=name, description=description, created_by=actor)
     service_account.full_clean(validate_unique=False)
@@ -268,9 +317,13 @@ def service_account_create(*, actor: User, name: str, description: str = "") -> 
         "Service account created",
         extra={"service_account_id": str(service_account.pk), "actor_id": str(actor.pk)},
     )
+    _audit(
+        actor, "iam.service_account.created", "iam.service_account", service_account.pk, name=name
+    )
     return service_account
 
 
+@transaction.atomic
 def service_account_update(
     *,
     actor: User,
@@ -292,6 +345,13 @@ def service_account_update(
             "is_active": service_account.is_active,
         },
     )
+    _audit(
+        actor,
+        "iam.service_account.updated",
+        "iam.service_account",
+        service_account.pk,
+        is_active=service_account.is_active,
+    )
     return service_account
 
 
@@ -304,6 +364,7 @@ class IssuedAPIKey:
         return f"IssuedAPIKey(api_key={self.api_key!r}, raw_key=<redacted>)"
 
 
+@transaction.atomic
 def api_key_issue(
     *,
     actor: User,
@@ -359,10 +420,21 @@ def api_key_issue(
                 "actor_id": str(actor.pk),
             },
         )
+        _audit(
+            actor,
+            "iam.api_key.issued",
+            "iam.api_key",
+            api_key.pk,
+            service_account=service_account.name,
+            key_prefix=api_key.prefix,
+            scopes=api_key.scopes,
+            expires_at=api_key.expires_at.isoformat(),
+        )
         return IssuedAPIKey(api_key=api_key, raw_key=generated.raw)
     raise AssertionError("unreachable")  # pragma: no cover
 
 
+@transaction.atomic
 def api_key_revoke(*, actor: User, api_key: APIKey) -> APIKey:
     """Revoke a key. Idempotent: revoking a revoked key keeps the original timestamp."""
     if api_key.revoked_at is None:
@@ -377,6 +449,7 @@ def api_key_revoke(*, actor: User, api_key: APIKey) -> APIKey:
                 "actor_id": str(actor.pk),
             },
         )
+        _audit(actor, "iam.api_key.revoked", "iam.api_key", api_key.pk, key_prefix=api_key.prefix)
     return api_key
 
 

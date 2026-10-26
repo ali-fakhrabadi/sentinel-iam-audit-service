@@ -22,6 +22,8 @@ urlpatterns = [
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="openapi-schema"), name="swagger-ui"),
     path("api/redoc/", SpectacularRedocView.as_view(url_name="openapi-schema"), name="redoc"),
     path("api/v1/", include("apps.accounts.urls")),
+    path("api/v1/", include("apps.audit_logs.urls")),
+    path("api/v1/", include("apps.webhooks.urls")),
     path(settings.ADMIN_URL, admin.site.urls),
 ]
 

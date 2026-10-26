@@ -63,7 +63,7 @@ SERVICE_ACCOUNTS_TAG = "Service accounts"
 _RequiredPermissions = dict[str, tuple[str, ...]]
 
 
-def _actor(request: Request) -> User:
+def request_actor(request: Request) -> User:
     user = request.user
     if not isinstance(user, User):  # guaranteed by IsHumanUser; narrows the type
         raise TypeError("Expected an authenticated user")
@@ -188,7 +188,7 @@ class MeView(APIView):
         responses=MeSerializer,
     )
     def get(self, request: Request) -> Response:
-        return Response(MeSerializer(MeSerializer.build(_actor(request))).data)
+        return Response(MeSerializer(MeSerializer.build(request_actor(request))).data)
 
     @extend_schema(
         operation_id="me_update",
@@ -201,7 +201,7 @@ class MeView(APIView):
         serializer = ProfileUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = services.profile_update(
-            user=_actor(request), full_name=serializer.validated_data["full_name"]
+            user=request_actor(request), full_name=serializer.validated_data["full_name"]
         )
         return Response(MeSerializer(MeSerializer.build(user)).data)
 
@@ -221,7 +221,7 @@ class PasswordChangeView(APIView):
     def post(self, request: Request) -> Response:
         serializer = PasswordChangeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        services.password_change(user=_actor(request), **serializer.validated_data)
+        services.password_change(user=request_actor(request), **serializer.validated_data)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -260,7 +260,7 @@ class UserListCreateView(HumanGenericAPIView):
     def post(self, request: Request) -> Response:
         serializer = UserCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user = services.user_create(actor=_actor(request), **serializer.validated_data)
+        user = services.user_create(actor=request_actor(request), **serializer.validated_data)
         return Response(
             UserSerializer(selectors.user_get(user.pk)).data, status=status.HTTP_201_CREATED
         )
@@ -293,7 +293,9 @@ class UserDetailView(HumanAPIView):
         serializer = UserUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         services.user_update(
-            actor=_actor(request), user=selectors.user_get(user_id), **serializer.validated_data
+            actor=request_actor(request),
+            user=selectors.user_get(user_id),
+            **serializer.validated_data,
         )
         return Response(UserSerializer(selectors.user_get(user_id)).data)
 
@@ -314,7 +316,7 @@ class UserRoleAssignView(HumanAPIView):
         serializer = RoleAssignmentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         _, created = services.role_assign(
-            actor=_actor(request),
+            actor=request_actor(request),
             user=selectors.user_get(user_id),
             role=selectors.role_get(serializer.validated_data["role"]),
         )
@@ -337,7 +339,7 @@ class UserRoleRevokeView(HumanAPIView):
     )
     def delete(self, request: Request, user_id: uuid.UUID, role_name: str) -> Response:
         services.role_revoke(
-            actor=_actor(request),
+            actor=request_actor(request),
             user=selectors.user_get(user_id),
             role=selectors.role_get(role_name),
         )
@@ -374,7 +376,7 @@ class RoleListCreateView(HumanAPIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         role = services.role_create(
-            actor=_actor(request),
+            actor=request_actor(request),
             name=data["name"],
             description=data["description"],
             permission_codes=data["permissions"],
@@ -413,7 +415,7 @@ class RoleDetailView(HumanAPIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         services.role_update(
-            actor=_actor(request),
+            actor=request_actor(request),
             role=selectors.role_get(role_name),
             description=data.get("description"),
             permission_codes=data.get("permissions"),
@@ -430,7 +432,7 @@ class RoleDetailView(HumanAPIView):
         },
     )
     def delete(self, request: Request, role_name: str) -> Response:
-        services.role_delete(actor=_actor(request), role=selectors.role_get(role_name))
+        services.role_delete(actor=request_actor(request), role=selectors.role_get(role_name))
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -482,7 +484,7 @@ class ServiceAccountListCreateView(HumanGenericAPIView):
         serializer = ServiceAccountCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         service_account = services.service_account_create(
-            actor=_actor(request), **serializer.validated_data
+            actor=request_actor(request), **serializer.validated_data
         )
         return Response(
             ServiceAccountSerializer(selectors.service_account_get(service_account.pk)).data,
@@ -519,7 +521,7 @@ class ServiceAccountDetailView(HumanAPIView):
         serializer = ServiceAccountUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         services.service_account_update(
-            actor=_actor(request),
+            actor=request_actor(request),
             service_account=selectors.service_account_get(service_account_id),
             **serializer.validated_data,
         )
@@ -557,7 +559,7 @@ class APIKeyListCreateView(HumanAPIView):
         serializer = APIKeyCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         issued = services.api_key_issue(
-            actor=_actor(request),
+            actor=request_actor(request),
             service_account=selectors.service_account_get(service_account_id),
             **serializer.validated_data,
         )
@@ -584,6 +586,6 @@ class APIKeyRevokeView(HumanAPIView):
     def post(self, request: Request, service_account_id: uuid.UUID, key_id: uuid.UUID) -> Response:
         service_account = selectors.service_account_get(service_account_id)
         api_key = services.api_key_revoke(
-            actor=_actor(request), api_key=selectors.api_key_get(service_account, key_id)
+            actor=request_actor(request), api_key=selectors.api_key_get(service_account, key_id)
         )
         return Response(APIKeySerializer(api_key).data)

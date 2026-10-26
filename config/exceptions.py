@@ -53,6 +53,7 @@ _PROBLEM_TYPES: dict[str, tuple[str, str]] = {
     "throttled": ("rate-limited", "Too many requests"),
     "payload_too_large": ("payload-too-large", "Request body too large"),
     "conflict": ("conflict", "Conflict with the current state of the resource"),
+    "service_unavailable": ("service-unavailable", "Service temporarily unavailable"),
     "bad_request": ("bad-request", "Bad request"),
     "server_error": ("internal-error", "Internal server error"),
 }
@@ -68,6 +69,12 @@ class BadRequest(exceptions.APIException):
     status_code = status.HTTP_400_BAD_REQUEST
     default_detail = "The request could not be processed."
     default_code = "bad_request"
+
+
+class ServiceUnavailable(exceptions.APIException):
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    default_detail = "The service is temporarily unavailable; retry later."
+    default_code = "service_unavailable"
 
 
 class Conflict(exceptions.APIException):

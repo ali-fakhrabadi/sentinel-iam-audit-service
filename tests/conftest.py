@@ -6,6 +6,7 @@ Tests run against the real PostgreSQL and Redis configured through the environme
 
 from __future__ import annotations
 
+import socket
 import uuid
 from collections.abc import Callable, Iterator, Sequence
 from typing import Any
@@ -17,6 +18,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.accounts import services
 from apps.accounts.models import Permission, Role, ServiceAccount, User
+from config.celery import app as celery_app
 from config.logging import request_id_var
 from tests.factories import create_service_account, create_user
 
@@ -39,6 +41,37 @@ def _isolated_settings(settings: Settings) -> None:
         "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
     }
     settings.PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _in_memory_celery_broker() -> Iterator[None]:
+    """Tasks enqueued by tests must never reach a real Redis shared with a running stack."""
+    previous = celery_app.conf.broker_url
+    celery_app.conf.update(broker_url="memory://")
+    yield
+    celery_app.conf.update(broker_url=previous)
+
+
+@pytest.fixture
+def sent_tasks(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Names of Celery tasks sent through ``send_task`` during the test."""
+    names: list[str] = []
+    monkeypatch.setattr(celery_app, "send_task", lambda name, *args, **kwargs: names.append(name))
+    return names
+
+
+@pytest.fixture
+def dns(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[str]]:
+    """Fake resolver for webhook destinations; unknown names do not resolve."""
+    table: dict[str, list[str]] = {"hooks.example.com": ["93.184.216.34"]}
+
+    def resolve(host: str, port: int) -> list[str]:
+        if host not in table:
+            raise socket.gaierror(f"{host} does not resolve")
+        return table[host]
+
+    monkeypatch.setattr("apps.webhooks.ssrf.resolve_host", resolve)
+    return table
 
 
 @pytest.fixture(autouse=True)
