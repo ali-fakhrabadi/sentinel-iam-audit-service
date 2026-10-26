@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime, timedelta
+from enum import StrEnum
 from typing import Any
 
 from django.conf import settings
@@ -23,6 +24,11 @@ _ACTION_RE = re.compile(ACTION_PATTERN)
 _RESOURCE_TYPE_RE = re.compile(RESOURCE_TYPE_PATTERN)
 _IDEMPOTENCY_KEY_RE = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 _MAX_METADATA_FILTER_BYTES = 512
+
+
+class ProducerType(StrEnum):
+    SERVICE_ACCOUNT = "service_account"
+    USER = "user"
 
 
 class _UppercaseChoiceField(serializers.ChoiceField):
@@ -215,7 +221,7 @@ class AuditEventQuerySerializer(serializers.Serializer):
 
 
 class ProducerSerializer(serializers.Serializer):
-    type = serializers.ChoiceField(choices=["service_account", "user"])
+    type = serializers.ChoiceField(choices=[member.value for member in ProducerType])
     id = serializers.UUIDField()
     name = serializers.CharField(help_text="Service account name or user email")
 
@@ -247,11 +253,11 @@ class AuditEventSerializer(serializers.ModelSerializer):
     def _producer(event: AuditEvent) -> dict[str, Any]:
         if event.producer_service_account is not None:
             account = event.producer_service_account
-            return {"type": "service_account", "id": account.id, "name": account.name}
+            return {"type": ProducerType.SERVICE_ACCOUNT, "id": account.id, "name": account.name}
         user = event.producer_user
         if user is None:  # forbidden by the audit_exactly_one_producer constraint
             raise ValueError("Audit event without producer")
-        return {"type": "user", "id": user.id, "name": user.email}
+        return {"type": ProducerType.USER, "id": user.id, "name": user.email}
 
     @extend_schema_field(ProducerSerializer)
     def get_producer(self, event: AuditEvent) -> dict[str, Any]:
