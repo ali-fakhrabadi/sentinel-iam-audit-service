@@ -106,6 +106,7 @@ on the receiver like this:
 ```python
 import hashlib, hmac, time
 
+
 def verify(secret: str, header: str, event_id: str, body: bytes, tolerance: int = 300) -> bool:
     timestamp, candidates = None, []
     for item in header.split(","):
