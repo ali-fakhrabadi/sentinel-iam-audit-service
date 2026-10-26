@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "sentinel.fullname" . }}-config
+  labels:
+    {{- include "sentinel.labels" . | nindent 4 }}
+data:
+  DJANGO_SETTINGS_MODULE: config.settings
+  DJANGO_DEBUG: "false"
+  DJANGO_ALLOWED_HOSTS: {{ .Values.config.allowedHosts | quote }}
+  DJANGO_CSRF_TRUSTED_ORIGINS: {{ .Values.config.csrfTrustedOrigins | quote }}
+  DJANGO_SECURE_HTTPS: {{ .Values.config.secureHttps | quote }}
+  DJANGO_LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  DJANGO_ADMIN_URL: {{ .Values.config.adminUrl | quote }}
+  API_TRUSTED_PROXY_COUNT: {{ .Values.config.trustedProxyCount | quote }}
+  GUNICORN_FORWARDED_ALLOW_IPS: {{ .Values.config.forwardedAllowIps | quote }}
+  CORS_ALLOWED_ORIGINS: {{ .Values.config.corsAllowedOrigins | quote }}
+  DB_HOST: {{ .Values.database.host | quote }}
+  DB_PORT: {{ .Values.database.port | quote }}
+  DB_NAME: {{ .Values.database.name | quote }}
+  DB_USER: {{ .Values.database.appUser | quote }}
+  DB_APP_ROLE: {{ .Values.database.appUser | quote }}
+  DB_STATEMENT_TIMEOUT_MS: {{ .Values.database.statementTimeoutMs | quote }}
+  {{- range $key, $value := .Values.config.extraEnv }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+---
+{{- if not .Values.secrets.existingSecret }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "sentinel.secretName" . }}
+  labels:
+    {{- include "sentinel.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  {{- range $key, $value := .Values.secrets.values }}
+  {{ $key }}: {{ required (printf "secrets.values.%s is required when secrets.existingSecret is empty" $key) $value | quote }}
+  {{- end }}
+{{- end }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "sentinel.fullname" . }}
+  labels:
+    {{- include "sentinel.labels" . | nindent 4 }}
+automountServiceAccountToken: false

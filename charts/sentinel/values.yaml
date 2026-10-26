@@ -1,0 +1,134 @@
+# Default values for the Sentinel chart. PostgreSQL and Redis are external
+# dependencies (managed services or separately operated charts).
+
+image:
+  repository: ghcr.io/ali-fakhrabadi/sentinel-iam-audit-service
+  # Defaults to the chart appVersion; CI publishes sha-<commit>, main and latest tags.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Non-secret configuration, rendered into a ConfigMap.
+config:
+  allowedHosts: "localhost,127.0.0.1"
+  csrfTrustedOrigins: ""
+  # true behind a TLS-terminating ingress: secure cookies, HSTS, HTTPS redirect.
+  secureHttps: true
+  corsAllowedOrigins: "http://localhost:3000,http://localhost:5173"
+  logLevel: INFO
+  adminUrl: "admin/"
+  trustedProxyCount: 1
+  # Proxies allowed to set X-Forwarded-Proto (the ingress controller pods).
+  forwardedAllowIps: "*"
+  extraEnv: {}
+
+database:
+  host: postgres
+  port: 5432
+  name: sentinel
+  # Runtime role (data access only) and schema owner (migrations).
+  appUser: sentinel_app
+  ownerUser: sentinel_owner
+  statementTimeoutMs: 5000
+
+redis:
+  host: redis
+  port: 6379
+  brokerDb: 0
+  cacheDb: 1
+
+# Secret values. Prefer an existing Secret managed by your secret store
+# (External Secrets, Sealed Secrets, Vault); it must contain the keys below.
+secrets:
+  existingSecret: ""
+  # Used only when existingSecret is empty.
+  values:
+    DJANGO_SECRET_KEY: ""
+    JWT_SIGNING_KEY: ""
+    METRICS_AUTH_TOKEN: ""
+    WEBHOOK_SECRET_ENCRYPTION_KEYS: ""
+    DB_PASSWORD: ""
+    DB_OWNER_PASSWORD: ""
+    REDIS_PASSWORD: ""
+
+web:
+  replicas: 2
+  gunicorn:
+    workers: 3
+    threads: 4
+    timeout: 30
+  resources:
+    requests: {cpu: 250m, memory: 384Mi}
+    limits: {memory: 768Mi}
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+  pdb:
+    enabled: true
+    minAvailable: 1
+
+worker:
+  replicas: 1
+  concurrency: 4
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 512Mi}
+
+beat:
+  resources:
+    requests: {cpu: 20m, memory: 128Mi}
+    limits: {memory: 256Mi}
+
+migrations:
+  enabled: true
+  backoffLimit: 2
+  activeDeadlineSeconds: 600
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: sentinel.example.com
+      paths: ["/api", "/admin", "/static"]
+  tls: []
+
+networkPolicy:
+  enabled: true
+  # Webhook deliveries may only reach public addresses: private, link-local
+  # (cloud metadata), CGNAT and loopback ranges are blocked here too, as a second
+  # layer behind the application's SSRF checks.
+  webhookEgressExcept:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - 100.64.0.0/10
+    - 169.254.0.0/16
+    - 127.0.0.0/8
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

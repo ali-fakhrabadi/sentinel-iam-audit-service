@@ -151,6 +151,9 @@ CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_BROKER_TRANSPORT_OPTIONS = {"visibility_timeout": 3600}
 CELERY_TIMEZONE = "UTC"
 CELERY_WORKER_HIJACK_ROOT_LOGGER = False
+# Scheduled (ETA) tasks such as delayed outbox drains and webhook retries fire within
+# 100 ms of their due time instead of Celery's default of up to one second late.
+CELERY_WORKER_TIMER_PRECISION = 0.1
 # Reconciliation loops: the transactional outbox and delivery records in PostgreSQL
 # are the source of truth, so anything Redis lost is picked up here.
 CELERY_BEAT_SCHEDULE: dict[str, dict[str, object]] = {
@@ -274,6 +277,10 @@ if AUDIT_OUTBOX_MIN_SEVERITY not in {"INFO", "WARN", "CRITICAL"}:
     raise ImproperlyConfigured("AUDIT_OUTBOX_MIN_SEVERITY must be INFO, WARN or CRITICAL.")
 # Celery task name that drains the outbox (the webhooks app implements it).
 AUDIT_OUTBOX_DISPATCH_TASK = "webhooks.dispatch_outbox"
+# Commits within this window share one scheduled drain (bounds queue growth).
+AUDIT_OUTBOX_DISPATCH_WINDOW_SECONDS = env_int(
+    "AUDIT_OUTBOX_DISPATCH_WINDOW_SECONDS", default=1, minimum=1, maximum=30
+)
 AUDIT_RETENTION_MIN_DAYS = env_int("AUDIT_RETENTION_MIN_DAYS", default=30, minimum=1)
 
 # --------------------------------------------------------------------------------------

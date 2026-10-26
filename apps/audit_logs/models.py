@@ -65,8 +65,14 @@ class AuditEvent(models.Model):
     created_at = models.DateTimeField(default=timezone.now)
     # PROTECT: principals with audit history are deactivated, never deleted, because
     # SET_NULL or CASCADE would have to modify append-only rows.
+    # Indexed by audit_producer_created_id_idx below, which also serves PROTECT checks.
     producer_service_account = models.ForeignKey(
-        ServiceAccount, on_delete=models.PROTECT, null=True, blank=True, related_name="+"
+        ServiceAccount,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+        db_index=False,
     )
     producer_user = models.ForeignKey(
         User, on_delete=models.PROTECT, null=True, blank=True, related_name="+"
@@ -83,22 +89,38 @@ class AuditEvent(models.Model):
         indexes: ClassVar[list[models.Index]] = [
             # Deterministic keyset pagination and time-range scans (newest first).
             models.Index(fields=["created_at", "id"], name="audit_created_id_idx"),
+            # Filter indexes end in (created_at, id), the full sort key, so a filtered page
+            # is one ordered index range with no sort step; selectors.page_queryset makes
+            # sure PostgreSQL uses them (see its module docstring for the measurements).
             # "What did this actor do?" Partial: most machine events have no actor.
             models.Index(
-                fields=["actor_id", "created_at"],
-                name="audit_actor_created_idx",
+                fields=["actor_id", "created_at", "id"],
+                name="audit_actor_created_id_idx",
                 condition=Q(actor_id__isnull=False),
             ),
             # "History of this resource."
             models.Index(
-                fields=["resource_type", "resource_id", "created_at"],
-                name="audit_resource_created_idx",
+                fields=["resource_type", "resource_id", "created_at", "id"],
+                name="audit_resource_created_id_idx",
             ),
-            models.Index(fields=["action", "created_at"], name="audit_action_created_idx"),
+            models.Index(fields=["action", "created_at", "id"], name="audit_action_created_id_idx"),
+            # "What came from this address?" Real traffic has many distinct IPs, so most
+            # lookups are rare values: without this index they scan the whole time window.
+            models.Index(
+                fields=["ip_address", "created_at", "id"],
+                name="audit_ip_created_id_idx",
+                condition=Q(ip_address__isnull=False),
+            ),
+            # API keys only read their own producer's events.
+            models.Index(
+                fields=["producer_service_account", "created_at", "id"],
+                name="audit_producer_created_id_idx",
+                condition=Q(producer_service_account__isnull=False),
+            ),
             # Alert views read WARN/CRITICAL only; INFO dominates volume, so it is excluded.
             models.Index(
-                fields=["severity", "created_at"],
-                name="audit_severity_created_idx",
+                fields=["severity", "created_at", "id"],
+                name="audit_severity_created_id_idx",
                 condition=~Q(severity=Severity.INFO),
             ),
             # Containment queries (metadata @> '{...}'); jsonb_path_ops is smaller and

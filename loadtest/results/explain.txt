@@ -1,0 +1,307 @@
+16 objects imported automatically (use -v 2 for details).
+
+dataset: 2,717,466 audit events
+
+### Newest page (default 30-day window)
+execution: 0.398 ms
+audit table access: Index Scan Backward audit_created_id_idx
+designed index used: yes (audit_created_id_idx)
+sequential scans on audit tables: none
+    Limit  (cost=0.72..16.96 rows=51 width=2088) (actual time=0.075..0.177 rows=51 loops=1)
+      Buffers: shared hit=58
+      ->  Nested Loop Left Join  (cost=0.72..685365.66 rows=2153009 width=2088) (actual time=0.074..0.171 rows=51 loops=1)
+            Buffers: shared hit=58
+            ->  Nested Loop Left Join  (cost=0.58..346218.72 rows=2153009 width=937) (actual time=0.046..0.122 rows=51 loops=1)
+                  Buffers: shared hit=56
+                  ->  Index Scan Backward using audit_created_id_idx on audit_logs_auditevent  (cost=0.43..292680.69 rows=2153009 width=226) (actual time=0.026..0.054 rows=51 loops=1)
+                        Index Cond: ((created_at >= '2026-09-26 11:01:33.345381+00'::timestamp with time zone) AND (created_at < '2026-10-26 11:01:33.345381+00'::timestamp with time zone))
+                        Buffers: shared hit=54
+                  ->  Memoize  (cost=0.15..0.17 rows=1 width=711) (actual time=0.001..0.001 rows=1 loops=51)
+                        Cache Key: audit_logs_auditevent.producer_service_account_id
+                        Cache Mode: logical
+                        Hits: 49  Misses: 2  Evictions: 0  Overflows: 0  Memory Usage: 1kB
+                        Buffers: shared hit=2
+
+### Deep page via keyset cursor (5,000 rows in)
+execution: 0.356 ms
+audit table access: Index Scan Backward audit_created_id_idx
+designed index used: yes (audit_created_id_idx)
+sequential scans on audit tables: none
+    Limit  (cost=0.72..17.49 rows=51 width=2088) (actual time=0.103..0.198 rows=51 loops=1)
+      Buffers: shared hit=99
+      ->  Nested Loop Left Join  (cost=0.72..704609.14 rows=2142628 width=2088) (actual time=0.103..0.193 rows=51 loops=1)
+            Buffers: shared hit=99
+            ->  Nested Loop Left Join  (cost=0.58..367097.21 rows=2142628 width=937) (actual time=0.087..0.155 rows=51 loops=1)
+                  Buffers: shared hit=99
+                  ->  Index Scan Backward using audit_created_id_idx on audit_logs_auditevent  (cost=0.43..313817.30 rows=2142628 width=226) (actual time=0.061..0.099 rows=51 loops=1)
+                        Index Cond: ((created_at >= '2026-09-26 11:01:33.345381+00'::timestamp with time zone) AND (created_at < '2026-10-26 11:01:33.345381+00'::timestamp with time zone) AND (created_at <= '2026-10-26 10:58:56.614347+00'::timestamp with time zone))
+                        Filter: ((created_at < '2026-10-26 10:58:56.614347+00'::timestamp with time zone) OR ((created_at = '2026-10-26 10:58:56.614347+00'::timestamp with time zone) AND (id < '3fc40133-2a5c-4155-9a19-ccadc965deca'::uuid)))
+                        Rows Removed by Filter: 79
+                        Buffers: shared hit=97
+                  ->  Memoize  (cost=0.15..0.17 rows=1 width=711) (actual time=0.001..0.001 rows=1 loops=51)
+                        Cache Key: audit_logs_auditevent.producer_service_account_id
+                        Cache Mode: logical
+
+### Actor history (busiest actor, user-0001)
+execution: 4.566 ms
+audit table access: Index Scan Backward audit_actor_created_id_idx
+designed index used: yes (audit_actor_created_id_idx)
+sequential scans on audit tables: none
+    Limit  (cost=0.72..36.15 rows=51 width=2088) (actual time=1.823..4.393 rows=51 loops=1)
+      Buffers: shared hit=12 read=54
+      ->  Nested Loop Left Join  (cost=0.72..347746.10 rows=500575 width=2088) (actual time=1.821..4.384 rows=51 loops=1)
+            Buffers: shared hit=12 read=54
+            ->  Nested Loop Left Join  (cost=0.58..268857.52 rows=500575 width=937) (actual time=1.275..3.790 rows=51 loops=1)
+                  Buffers: shared hit=12 read=54
+                  ->  Index Scan Backward using audit_actor_created_id_idx on audit_logs_auditevent  (cost=0.43..256409.07 rows=500575 width=226) (actual time=1.219..3.607 rows=51 loops=1)
+                        Index Cond: (((actor_id)::text = ANY ('{user-0001}'::text[])) AND (created_at >= '2026-09-26 11:01:33.345381+00'::timestamp with time zone) AND (created_at < '2026-10-26 11:01:33.345381+00'::timestamp with time zone))
+                        Buffers: shared hit=2 read=54
+                  ->  Memoize  (cost=0.15..0.17 rows=1 width=711) (actual time=0.002..0.002 rows=1 loops=51)
+                        Cache Key: audit_logs_auditevent.producer_service_account_id
+                        Cache Mode: logical
+                        Hits: 46  Misses: 5  Evictions: 0  Overflows: 0  Memory Usage: 1kB
+                        Buffers: shared hit=10
+
+### Resource history (storage.bucket/bucket-42)
+execution: 0.883 ms
+audit table access: Index Scan Backward audit_resource_created_id_idx
+designed index used: yes (audit_resource_created_id_idx)
+sequential scans on audit tables: none
+    Limit  (cost=27.74..27.75 rows=1 width=2088) (actual time=0.736..0.740 rows=0 loops=1)
+      Buffers: shared hit=8 read=2
+      ->  Sort  (cost=27.74..27.75 rows=1 width=2088) (actual time=0.735..0.738 rows=0 loops=1)
+            Sort Key: audit_logs_auditevent.resource_type DESC, audit_logs_auditevent.created_at DESC, audit_logs_auditevent.id DESC
+            Sort Method: quicksort  Memory: 25kB
+            Buffers: shared hit=8 read=2
+            ->  Nested Loop Left Join  (cost=8.73..27.73 rows=1 width=2088) (actual time=0.639..0.642 rows=0 loops=1)
+                  Buffers: shared hit=2 read=2
+                  ->  Hash Right Join  (cost=8.59..19.43 rows=1 width=1377) (actual time=0.638..0.640 rows=0 loops=1)
+                        Hash Cond: (accounts_user.id = audit_logs_auditevent.producer_user_id)
+                        Buffers: shared hit=2 read=2
+                        ->  Seq Scan on accounts_user  (cost=0.00..10.60 rows=60 width=1151) (never executed)
+                        ->  Hash  (cost=8.58..8.58 rows=1 width=226) (actual time=0.633..0.635 rows=0 loops=1)
+                              Buckets: 1024  Batches: 1  Memory Usage: 8kB
+
+### CRITICAL alerts
+execution: 0.371 ms
+audit table access: Index Scan Backward audit_severity_created_id_idx
+designed index used: yes (audit_severity_created_id_idx)
+sequential scans on audit tables: none
+    Limit  (cost=0.71..123.30 rows=51 width=2088) (actual time=0.085..0.227 rows=51 loops=1)
+      Buffers: shared hit=51
+      ->  Nested Loop Left Join  (cost=0.71..161977.37 rows=67389 width=2088) (actual time=0.084..0.221 rows=51 loops=1)
+            Buffers: shared hit=51
+            ->  Nested Loop Left Join  (cost=0.57..151315.59 rows=67389 width=937) (actual time=0.069..0.177 rows=51 loops=1)
+                  Buffers: shared hit=51
+                  ->  Index Scan Backward using audit_severity_created_id_idx on audit_logs_auditevent  (cost=0.42..149638.77 rows=67389 width=226) (actual time=0.036..0.099 rows=51 loops=1)
+                        Index Cond: (((severity)::text = ANY ('{CRITICAL}'::text[])) AND (created_at >= '2026-09-26 11:01:33.345381+00'::timestamp with time zone) AND (created_at < '2026-10-26 11:01:33.345381+00'::timestamp with time zone))
+                        Buffers: shared hit=49
+                  ->  Memoize  (cost=0.15..0.17 rows=1 width=711) (actual time=0.001..0.001 rows=1 loops=51)
+                        Cache Key: audit_logs_auditevent.producer_service_account_id
+                        Cache Mode: logical
+                        Hits: 50  Misses: 1  Evictions: 0  Overflows: 0  Memory Usage: 1kB
+                        Buffers: shared hit=2
+
+### Action filter (auth.login.failed)
+execution: 0.460 ms
+audit table access: Index Scan Backward audit_action_created_id_idx
+designed index used: yes (audit_action_created_id_idx)
+sequential scans on audit tables: none
+    Limit  (cost=0.85..65.99 rows=51 width=2088) (actual time=0.131..0.282 rows=51 loops=1)
+      Buffers: shared hit=57
+      ->  Nested Loop Left Join  (cost=0.85..391509.83 rows=306517 width=2088) (actual time=0.129..0.274 rows=51 loops=1)
+            Buffers: shared hit=57
+            ->  Nested Loop Left Join  (cost=0.71..343185.39 rows=306517 width=937) (actual time=0.109..0.214 rows=51 loops=1)
+                  Buffers: shared hit=57
+                  ->  Index Scan Backward using audit_action_created_id_idx on audit_logs_auditevent  (cost=0.56..335562.40 rows=306517 width=226) (actual time=0.062..0.109 rows=51 loops=1)
+                        Index Cond: (((action)::text = ANY ('{auth.login.failed}'::text[])) AND (created_at >= '2026-09-26 11:01:33.345381+00'::timestamp with time zone) AND (created_at < '2026-10-26 11:01:33.345381+00'::timestamp with time zone))
+                        Buffers: shared hit=55
+                  ->  Memoize  (cost=0.15..0.17 rows=1 width=711) (actual time=0.001..0.001 rows=1 loops=51)
+                        Cache Key: audit_logs_auditevent.producer_service_account_id
+                        Cache Mode: logical
+                        Hits: 50  Misses: 1  Evictions: 0  Overflows: 0  Memory Usage: 1kB
+                        Buffers: shared hit=2
+
+### Source IP (203.0.113.77)
+execution: 0.431 ms
+audit table access: Index Scan Backward audit_ip_created_id_idx
+designed index used: yes (audit_ip_created_id_idx)
+sequential scans on audit tables: none
+    Limit  (cost=0.72..198.19 rows=51 width=2088) (actual time=0.142..0.306 rows=51 loops=1)
+      Buffers: shared hit=53
+      ->  Nested Loop Left Join  (cost=0.72..13405.17 rows=3462 width=2088) (actual time=0.141..0.300 rows=51 loops=1)
+            Buffers: shared hit=53
+            ->  Nested Loop Left Join  (cost=0.58..12811.87 rows=3462 width=937) (actual time=0.121..0.250 rows=51 loops=1)
+                  Buffers: shared hit=53
+                  ->  Index Scan Backward using audit_ip_created_id_idx on audit_logs_auditevent  (cost=0.43..12724.57 rows=3462 width=226) (actual time=0.082..0.163 rows=51 loops=1)
+                        Index Cond: ((ip_address = ANY ('{203.0.113.77}'::inet[])) AND (created_at >= '2026-09-26 11:01:33.345381+00'::timestamp with time zone) AND (created_at < '2026-10-26 11:01:33.345381+00'::timestamp with time zone))
+                        Buffers: shared hit=51
+                  ->  Memoize  (cost=0.15..0.18 rows=1 width=711) (actual time=0.001..0.001 rows=1 loops=51)
+                        Cache Key: audit_logs_auditevent.producer_service_account_id
+                        Cache Mode: logical
+                        Hits: 50  Misses: 1  Evictions: 0  Overflows: 0  Memory Usage: 1kB
+                        Buffers: shared hit=2
+
+### Metadata containment, common value {"mfa": true}, step 1: newest 10,000 rows
+execution: 0.331 ms
+audit table access: Index Scan Backward audit_created_id_idx
+designed index used: n/a (bounded to the newest 10,000 rows)
+sequential scans on audit tables: none
+    Limit  (cost=0.72..310.40 rows=51 width=2088) (actual time=0.084..0.200 rows=51 loops=1)
+      Buffers: shared hit=73
+      ->  Nested Loop Left Join  (cost=0.72..12624.80 rows=2079 width=2088) (actual time=0.084..0.194 rows=51 loops=1)
+            Buffers: shared hit=73
+            ->  Nested Loop Left Join  (cost=0.58..12249.31 rows=2079 width=937) (actual time=0.066..0.155 rows=51 loops=1)
+                  Buffers: shared hit=73
+                  ->  Index Scan Backward using audit_created_id_idx on audit_logs_auditevent  (cost=0.43..12196.34 rows=2079 width=226) (actual time=0.039..0.099 rows=51 loops=1)
+                        Index Cond: ((created_at >= '2026-09-26 11:01:33.345381+00'::timestamp with time zone) AND (created_at < '2026-10-26 11:01:33.345381+00'::timestamp with time zone) AND (created_at >= '2026-10-26 10:58:53.764493+00'::timestamp with time zone))
+                        Filter: ((metadata @> '{"mfa": true}'::jsonb) AND ((created_at > '2026-10-26 10:58:53.764493+00'::timestamp with time zone) OR (id >= '900a3f3e-b695-414e-9fa0-79cfbd464054'::uuid)))
+                        Rows Removed by Filter: 17
+                        Buffers: shared hit=71
+                  ->  Memoize  (cost=0.15..0.19 rows=1 width=711) (actual time=0.001..0.001 rows=1 loops=51)
+                        Cache Key: audit_logs_auditevent.producer_service_account_id
+                        Cache Mode: logical
+page filled by step 1: yes (step 2 not run by the API)
+
+### Metadata containment, common value {"mfa": true}, step 2: selective plan
+execution: 3315.940 ms
+audit table access: -
+designed index used: NO (audit_metadata_gin)
+sequential scans on audit tables: audit_logs_auditevent
+    Limit  (cost=131931.67..131937.62 rows=51 width=2096) (actual time=3279.352..3311.773 rows=51 loops=1)
+      Buffers: shared hit=11791 read=69782
+      ->  Gather Merge  (cost=131931.67..299780.52 rows=1438604 width=2096) (actual time=3250.710..3283.120 rows=51 loops=1)
+            Workers Planned: 2
+            Workers Launched: 2
+            Buffers: shared hit=11791 read=69782
+            ->  Sort  (cost=130931.64..132729.90 rows=719302 width=2096) (actual time=3216.649..3216.665 rows=34 loops=3)
+                  Sort Key: ((audit_logs_auditevent.created_at + '00:00:00'::interval)) DESC, audit_logs_auditevent.id DESC
+                  Sort Method: top-N heapsort  Memory: 76kB
+                  Buffers: shared hit=11791 read=69782
+                  Worker 0:  Sort Method: top-N heapsort  Memory: 75kB
+                  Worker 1:  Sort Method: top-N heapsort  Memory: 71kB
+                  ->  Hash Left Join  (cost=23.82..106934.20 rows=719302 width=2096) (actual time=21.644..2526.948 rows=590880 loops=3)
+                        Hash Cond: (audit_logs_auditevent.producer_user_id = accounts_user.id)
+
+### Metadata containment, rare value {"rule_id": "R-2518"}, step 1: newest 10,000 rows
+execution: 6.016 ms
+audit table access: Bitmap Index Scan audit_created_id_idx; Bitmap Index Scan audit_metadata_gin
+designed index used: n/a (bounded to the newest 10,000 rows)
+sequential scans on audit tables: none
+    Limit  (cost=1577.87..1577.87 rows=1 width=2088) (actual time=5.767..5.771 rows=0 loops=1)
+      Buffers: shared hit=370
+      ->  Sort  (cost=1577.87..1577.87 rows=1 width=2088) (actual time=5.766..5.769 rows=0 loops=1)
+            Sort Key: audit_logs_auditevent.created_at DESC, audit_logs_auditevent.id DESC
+            Sort Method: quicksort  Memory: 25kB
+            Buffers: shared hit=370
+            ->  Nested Loop Left Join  (cost=1550.01..1577.86 rows=1 width=2088) (actual time=5.750..5.753 rows=0 loops=1)
+                  Join Filter: (audit_logs_auditevent.producer_user_id = accounts_user.id)
+                  Buffers: shared hit=370
+                  ->  Nested Loop Left Join  (cost=1550.01..1566.51 rows=1 width=937) (actual time=5.749..5.752 rows=0 loops=1)
+                        Join Filter: (audit_logs_auditevent.producer_service_account_id = accounts_serviceaccount.id)
+                        Buffers: shared hit=370
+                        ->  Bitmap Heap Scan on audit_logs_auditevent  (cost=1550.01..1554.03 rows=1 width=226) (actual time=5.748..5.750 rows=0 loops=1)
+                              Recheck Cond: ((created_at >= '2026-09-26 11:01:33.345381+00'::timestamp with time zone) AND (created_at < '2026-10-26 11:01:33.345381+00'::timestamp with time zone) AND (created_at >= '2026-10-26 10:58:53.764493+00'::timestamp with time zone) AND (metadata @> '{"rule_id": "R-2518"}'::jsonb))
+page filled by step 1: no
+
+### Metadata containment, rare value {"rule_id": "R-2518"}, step 2: selective plan
+execution: 7.086 ms
+audit table access: Bitmap Index Scan audit_metadata_gin
+designed index used: yes (audit_metadata_gin)
+sequential scans on audit tables: none
+    Limit  (cost=1914.00..1914.13 rows=51 width=2096) (actual time=6.793..6.804 rows=51 loops=1)
+      Buffers: shared hit=324 read=216
+      ->  Sort  (cost=1914.00..1914.29 rows=114 width=2096) (actual time=6.792..6.798 rows=51 loops=1)
+            Sort Key: ((audit_logs_auditevent.created_at + '00:00:00'::interval)) DESC, audit_logs_auditevent.id DESC
+            Sort Method: quicksort  Memory: 74kB
+            Buffers: shared hit=324 read=216
+            ->  Hash Left Join  (cost=1342.57..1910.20 rows=114 width=2096) (actual time=4.342..6.629 rows=98 loops=1)
+                  Hash Cond: (audit_logs_auditevent.producer_user_id = accounts_user.id)
+                  Buffers: shared hit=324 read=216
+                  ->  Nested Loop Left Join  (cost=1331.22..1898.26 rows=114 width=937) (actual time=4.285..6.542 rows=98 loops=1)
+                        Buffers: shared hit=323 read=216
+                        ->  Bitmap Heap Scan on audit_logs_auditevent  (cost=1331.07..1891.42 rows=114 width=226) (actual time=4.247..6.402 rows=98 loops=1)
+                              Recheck Cond: (metadata @> '{"rule_id": "R-2518"}'::jsonb)
+                              Filter: ((created_at >= '2026-09-26 11:01:33.345381+00'::timestamp with time zone) AND (created_at < '2026-10-26 11:01:33.345381+00'::timestamp with time zone))
+
+## Worst cases
+
+### Last page of the window (2,215,778 newer rows skipped by the cursor)
+execution: 0.743 ms
+audit table access: Index Scan Backward audit_created_id_idx
+designed index used: yes (audit_created_id_idx)
+sequential scans on audit tables: none
+    Limit  (cost=296.85..296.91 rows=26 width=2088) (actual time=0.414..0.426 rows=51 loops=1)
+      Buffers: shared hit=67
+      ->  Sort  (cost=296.85..296.91 rows=26 width=2088) (actual time=0.413..0.419 rows=51 loops=1)
+            Sort Key: audit_logs_auditevent.created_at DESC, audit_logs_auditevent.id DESC
+            Sort Method: quicksort  Memory: 50kB
+            Buffers: shared hit=67
+            ->  Hash Left Join  (cost=11.93..296.24 rows=26 width=2088) (actual time=0.132..0.300 rows=51 loops=1)
+                  Hash Cond: (audit_logs_auditevent.producer_user_id = accounts_user.id)
+                  Buffers: shared hit=67
+                  ->  Nested Loop Left Join  (cost=0.58..284.82 rows=26 width=937) (actual time=0.076..0.226 rows=51 loops=1)
+                        Buffers: shared hit=66
+                        ->  Index Scan Backward using audit_created_id_idx on audit_logs_auditevent  (cost=0.43..270.59 rows=26 width=226) (actual time=0.041..0.132 rows=51 loops=1)
+                              Index Cond: ((created_at >= '2026-09-26 11:01:33.345381+00'::timestamp with time zone) AND (created_at < '2026-10-26 11:01:33.345381+00'::timestamp with time zone) AND (created_at <= '2026-09-26 11:07:25.021272+00'::timestamp with time zone))
+                              Filter: ((created_at < '2026-09-26 11:07:25.021272+00'::timestamp with time zone) OR ((created_at = '2026-09-26 11:07:25.021272+00'::timestamp with time zone) AND (id < 'e1f4f055-0597-44d9-b9d0-845b7c54b48b'::uuid)))
+
+### Action filter (auth.token.refreshed)
+execution: 4.587 ms
+audit table access: Index Scan Backward audit_action_created_id_idx
+designed index used: yes (audit_action_created_id_idx)
+sequential scans on audit tables: none
+    Limit  (cost=0.85..103.11 rows=51 width=2088) (actual time=2.686..4.147 rows=51 loops=1)
+      Buffers: shared hit=23 read=44
+      ->  Nested Loop Left Join  (cost=0.85..360753.40 rows=179920 width=2088) (actual time=2.684..4.133 rows=51 loops=1)
+            Buffers: shared hit=23 read=44
+            ->  Nested Loop Left Join  (cost=0.71..332367.98 rows=179920 width=937) (actual time=2.648..3.957 rows=51 loops=1)
+                  Buffers: shared hit=23 read=44
+                  ->  Index Scan Backward using audit_action_created_id_idx on audit_logs_auditevent  (cost=0.56..327892.97 rows=179920 width=226) (actual time=2.546..3.717 rows=51 loops=1)
+                        Index Cond: (((action)::text = ANY ('{auth.token.refreshed}'::text[])) AND (created_at >= '2026-09-26 11:01:33.345381+00'::timestamp with time zone) AND (created_at < '2026-10-26 11:01:33.345381+00'::timestamp with time zone))
+                        Buffers: shared hit=13 read=44
+                  ->  Memoize  (cost=0.15..0.17 rows=1 width=711) (actual time=0.003..0.003 rows=1 loops=51)
+                        Cache Key: audit_logs_auditevent.producer_service_account_id
+                        Cache Mode: logical
+                        Hits: 46  Misses: 5  Evictions: 0  Overflows: 0  Memory Usage: 1kB
+                        Buffers: shared hit=10
+
+### Source IP with no events (192.0.2.200)
+execution: 0.851 ms
+audit table access: Index Scan Backward audit_ip_created_id_idx
+designed index used: yes (audit_ip_created_id_idx)
+sequential scans on audit tables: none
+    Limit  (cost=0.72..198.19 rows=51 width=2088) (actual time=0.718..0.721 rows=0 loops=1)
+      Buffers: shared hit=1 read=2
+      ->  Nested Loop Left Join  (cost=0.72..13405.17 rows=3462 width=2088) (actual time=0.717..0.719 rows=0 loops=1)
+            Buffers: shared hit=1 read=2
+            ->  Nested Loop Left Join  (cost=0.58..12811.87 rows=3462 width=937) (actual time=0.717..0.718 rows=0 loops=1)
+                  Buffers: shared hit=1 read=2
+                  ->  Index Scan Backward using audit_ip_created_id_idx on audit_logs_auditevent  (cost=0.43..12724.57 rows=3462 width=226) (actual time=0.716..0.717 rows=0 loops=1)
+                        Index Cond: ((ip_address = ANY ('{192.0.2.200}'::inet[])) AND (created_at >= '2026-09-26 11:01:33.345381+00'::timestamp with time zone) AND (created_at < '2026-10-26 11:01:33.345381+00'::timestamp with time zone))
+                        Buffers: shared hit=1 read=2
+                  ->  Memoize  (cost=0.15..0.18 rows=1 width=711) (never executed)
+                        Cache Key: audit_logs_auditevent.producer_service_account_id
+                        Cache Mode: logical
+                        ->  Index Scan using accounts_serviceaccount_pkey on accounts_serviceaccount  (cost=0.14..0.17 rows=1 width=711) (never executed)
+                              Index Cond: (id = audit_logs_auditevent.producer_service_account_id)
+
+### API key scope (smallest producer: 1 event(s))
+execution: 1.120 ms
+audit table access: Index Scan Backward audit_producer_created_id_idx
+designed index used: yes (audit_producer_created_id_idx)
+sequential scans on audit tables: none
+    Limit  (cost=25.61..25.61 rows=1 width=2088) (actual time=0.850..0.853 rows=1 loops=1)
+      Buffers: shared hit=5 read=3
+      ->  Sort  (cost=25.61..25.61 rows=1 width=2088) (actual time=0.848..0.851 rows=1 loops=1)
+            Sort Key: audit_logs_auditevent.producer_service_account_id DESC, audit_logs_auditevent.created_at DESC, audit_logs_auditevent.id DESC
+            Sort Method: quicksort  Memory: 25kB
+            Buffers: shared hit=5 read=3
+            ->  Nested Loop Left Join  (cost=6.60..25.60 rows=1 width=2088) (actual time=0.810..0.816 rows=1 loops=1)
+                  Buffers: shared hit=5 read=3
+                  ->  Hash Right Join  (cost=6.46..17.29 rows=1 width=1377) (actual time=0.773..0.778 rows=1 loops=1)
+                        Hash Cond: (accounts_user.id = audit_logs_auditevent.producer_user_id)
+                        Buffers: shared hit=3 read=3
+                        ->  Seq Scan on accounts_user  (cost=0.00..10.60 rows=60 width=1151) (actual time=0.010..0.011 rows=3 loops=1)
+                              Buffers: shared hit=1
+                        ->  Hash  (cost=6.45..6.45 rows=1 width=226) (actual time=0.735..0.736 rows=1 loops=1)

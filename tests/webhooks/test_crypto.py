@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from io import StringIO
+
 import pytest
 from cryptography.fernet import Fernet
+from django.core.management import call_command
 from pytest_django import Settings
 
 from apps.webhooks.checks import check_webhook_encryption_keys
@@ -13,6 +16,7 @@ from apps.webhooks.crypto import (
     rotate_ciphertext,
 )
 from config.logging import redact_text
+from tests.factories import create_endpoint
 
 
 def test_secrets_are_encrypted_and_recoverable() -> None:
@@ -46,6 +50,22 @@ def test_encryption_keys_can_be_rotated(settings: Settings) -> None:
     assert decrypt_secret(rotated) == "whsec_rotate-me"
     with pytest.raises(SecretUnavailableError):
         decrypt_secret(ciphertext)
+
+
+@pytest.mark.django_db
+def test_reencrypt_command_moves_every_secret_to_the_new_key(settings: Settings) -> None:
+    old_key, new_key = Fernet.generate_key().decode(), Fernet.generate_key().decode()
+    settings.WEBHOOK_SECRET_ENCRYPTION_KEYS = [old_key]
+    endpoint, secret = create_endpoint()
+
+    settings.WEBHOOK_SECRET_ENCRYPTION_KEYS = [new_key, old_key]
+    output = StringIO()
+    call_command("reencrypt_webhook_secrets", stdout=output)
+
+    settings.WEBHOOK_SECRET_ENCRYPTION_KEYS = [new_key]
+    endpoint.refresh_from_db()
+    assert decrypt_secret(endpoint.secret_ciphertext) == secret
+    assert "1 webhook endpoint" in output.getvalue()
 
 
 @pytest.mark.parametrize(

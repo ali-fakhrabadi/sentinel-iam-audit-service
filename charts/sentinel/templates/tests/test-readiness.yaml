@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "sentinel.fullname" . }}-test-readiness
+  # Deliberately not the chart's selector labels: the default-deny NetworkPolicy
+  # would otherwise block this client from reaching the web Service.
+  labels:
+    app.kubernetes.io/part-of: {{ include "sentinel.name" . }}
+    app.kubernetes.io/component: helm-test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    seccompProfile: {type: RuntimeDefault}
+  containers:
+    - name: readiness
+      image: {{ include "sentinel.image" . }}
+      imagePullPolicy: {{ .Values.image.pullPolicy }}
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities: {drop: [ALL]}
+      # Readiness (PostgreSQL + Redis), the migrated schema (RBAC catalog served by
+      # the API) and the OpenAPI document, all through the Service.
+      command:
+        - python
+        - -c
+        - |
+          import json, sys, urllib.request
+          base = "http://{{ include "sentinel.fullname" . }}-web:{{ .Values.service.port }}"
+          def get(path, token=None):
+              request = urllib.request.Request(base + path, headers={"Host": "localhost"})
+              with urllib.request.urlopen(request, timeout=10) as response:
+                  return response.status, json.loads(response.read() or b"{}")
+          status, body = get("/health/ready/")
+          assert status == 200 and body["status"] == "ok", body
+          status, schema = get("/api/schema/?format=json")
+          assert status == 200 and "/api/v1/audit/events/bulk/" in schema["paths"], "schema"
+          print("readiness ok:", body["checks"])

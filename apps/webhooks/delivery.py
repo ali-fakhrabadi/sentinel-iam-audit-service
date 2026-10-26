@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import ssl
 import time
 from dataclasses import dataclass
+from functools import cache
 from http import HTTPStatus
 from typing import Literal
 
@@ -26,6 +28,17 @@ class AttemptResult:
     status_code: int | None
     error: str
     duration_seconds: float
+
+
+@cache
+def _tls_context() -> ssl.SSLContext:
+    """Certificate-verifying TLS context (certifi bundle), built once per process.
+
+    Building it loads the whole CA bundle, about 11 ms of CPU; doing that for every
+    delivery was the largest fixed cost of an attempt. ``trust_env=False`` keeps
+    ``SSL_CERT_FILE``/``SSL_CERT_DIR`` from replacing the bundle.
+    """
+    return httpx.create_ssl_context(trust_env=False)
 
 
 def classify_status(status_code: int) -> tuple[Outcome, str]:
@@ -59,7 +72,9 @@ def send(destination: Destination, *, body: bytes, headers: dict[str, str]) -> A
     extensions = {"sni_hostname": destination.host} if destination.scheme == "https" else {}
     started = time.perf_counter()
     # trust_env=False: proxy variables would bypass the pinned, validated address.
-    with httpx.Client(timeout=timeout, follow_redirects=False, trust_env=False) as client:
+    with httpx.Client(
+        timeout=timeout, follow_redirects=False, trust_env=False, verify=_tls_context()
+    ) as client:
         request = client.build_request(
             "POST",
             destination.pinned_url(),

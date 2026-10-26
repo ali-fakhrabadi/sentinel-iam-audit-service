@@ -53,11 +53,15 @@ def _in_memory_celery_broker() -> Iterator[None]:
 
 
 @pytest.fixture
-def sent_tasks(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Names of Celery tasks sent through ``send_task`` during the test."""
-    names: list[str] = []
-    monkeypatch.setattr(celery_app, "send_task", lambda name, *args, **kwargs: names.append(name))
-    return names
+def sent_tasks(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, float | None]]:
+    """(name, countdown) of Celery tasks sent through ``send_task`` during the test."""
+    sent: list[tuple[str, float | None]] = []
+
+    def send_task(name: str, *args: Any, countdown: float | None = None, **kwargs: Any) -> None:
+        sent.append((name, countdown))
+
+    monkeypatch.setattr(celery_app, "send_task", send_task)
+    return sent
 
 
 @pytest.fixture

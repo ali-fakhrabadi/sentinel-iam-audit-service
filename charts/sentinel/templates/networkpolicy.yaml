@@ -1,0 +1,62 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $selector := include "sentinel.selectorLabels" . }}
+# Default deny for every Sentinel pod, then explicit allowances.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "sentinel.fullname" . }}-default-deny
+  labels:
+    {{- include "sentinel.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- $selector | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  egress:
+    # DNS, PostgreSQL and Redis for every component.
+    - ports:
+        - {port: 53, protocol: UDP}
+        - {port: 53, protocol: TCP}
+    - ports:
+        - {port: {{ .Values.database.port }}, protocol: TCP}
+        - {port: {{ .Values.redis.port }}, protocol: TCP}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "sentinel.fullname" . }}-web-ingress
+  labels:
+    {{- include "sentinel.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- $selector | nindent 6 }}
+      app.kubernetes.io/component: web
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - {port: 8000, protocol: TCP}
+---
+# Only the worker sends webhooks, and only to public addresses.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "sentinel.fullname" . }}-worker-webhook-egress
+  labels:
+    {{- include "sentinel.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- $selector | nindent 6 }}
+      app.kubernetes.io/component: worker
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              {{- toYaml .Values.networkPolicy.webhookEgressExcept | nindent 14 }}
+      ports:
+        - {port: 443, protocol: TCP}
+        - {port: 80, protocol: TCP}
+{{- end }}

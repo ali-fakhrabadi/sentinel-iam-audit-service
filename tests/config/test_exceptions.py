@@ -126,6 +126,19 @@ def test_unexpected_errors_are_logged_but_not_exposed(
     assert body["request_id"]
 
 
+def test_database_timeouts_become_503_and_are_logged(
+    api_client: APIClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="sentinel.errors"):
+        response = api_client.get("/errors/db-timeout/")
+
+    _assert_problem(response, status=503, slug="service-unavailable")
+    assert "statement timeout" not in response.content.decode()
+    logged = [r for r in caplog.records if r.name == "sentinel.errors"]
+    assert logged
+    assert logged[0].exc_info is not None
+
+
 def test_oversized_body_is_rejected_before_parsing(
     api_client: APIClient, settings: Settings
 ) -> None:

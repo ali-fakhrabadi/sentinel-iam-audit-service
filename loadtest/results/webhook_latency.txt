@@ -1,0 +1,2 @@
+idle: 1200 events, 1200 delivered; commit -> webhook acknowledged ms: p50=881 p95=1582 p99=1932 max=2483
+under bulk load: 601 events, 601 delivered; commit -> webhook acknowledged ms: p50=882 p95=1582 p99=1807 max=1899

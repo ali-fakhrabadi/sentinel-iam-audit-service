@@ -1,0 +1,7 @@
+date: 2026-10-26T11:01:02Z
+host: 10 vCPU, 9 GiB RAM, Debian GNU/Linux 12 (bookworm)
+container limits: web 2 vCPU / 768 MiB, postgres 2 vCPU / 1 GiB, worker 1 vCPU / 512 MiB
+postgres: 16.15, shared_buffers 256MB
+audit events before run: 2717465
+gunicorn: 3 workers x 4 threads; celery concurrency 4
+audit events after run: 2905547

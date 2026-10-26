@@ -1,0 +1,30 @@
+# Benchmark-only overrides. Never use in production.
+#
+#   docker compose -f docker-compose.yml -f loadtest/docker-compose.loadtest.yml up -d --wait
+#
+# * Rate limits are raised so the tests measure capacity, not the throttle.
+# * A local receiver is added for the event-to-webhook latency test. Delivering to it
+#   needs the SSRF development override, which only takes effect with DEBUG on, so
+#   both are enabled for the worker alone; the API keeps production settings.
+
+services:
+  web:
+    environment:
+      THROTTLE_RATE_USER: 1000000/minute
+      THROTTLE_RATE_INGEST: 1000000/minute
+      THROTTLE_RATE_AUTH: 1000/minute
+
+  worker:
+    environment:
+      DJANGO_DEBUG: "true"
+      WEBHOOK_ALLOW_INSECURE_DESTINATIONS: "true"
+
+  webhook-receiver:
+    image: python:3.12.15-slim-trixie
+    command: ["python", "/receiver.py"]
+    volumes:
+      - ./loadtest/webhook_receiver.py:/receiver.py:ro
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    networks: [egress]

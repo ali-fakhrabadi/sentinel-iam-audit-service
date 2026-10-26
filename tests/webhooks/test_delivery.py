@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import ssl
 from datetime import timedelta
 from typing import Any
 
@@ -17,6 +18,7 @@ from apps.accounts.models import ServiceAccount, User
 from apps.audit_logs import services as audit_services
 from apps.audit_logs.models import AuditEvent, OutboxMessage, OutboxStatus
 from apps.audit_logs.services import EventInput
+from apps.webhooks import delivery as delivery_http
 from apps.webhooks import services, tasks
 from apps.webhooks.models import DeliveryStatus, WebhookDelivery, WebhookEndpoint
 from apps.webhooks.signing import verify_signature
@@ -77,7 +79,7 @@ def test_dispatch_routes_events_to_matching_endpoints_only(
     producer: ServiceAccount,
     enqueued: list[tuple[str, float]],
     django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
-    sent_tasks: list[str],
+    sent_tasks: list[tuple[str, float | None]],
 ) -> None:
     create_endpoint(name="all-warnings", min_severity="WARN")
     create_endpoint(name="critical-only", min_severity="CRITICAL")
@@ -105,18 +107,25 @@ def test_dispatch_routes_events_to_matching_endpoints_only(
 
 
 def test_dispatch_is_idempotent(
-    producer: ServiceAccount, enqueued: list[tuple[str, float]]
+    producer: ServiceAccount,
+    enqueued: list[tuple[str, float]],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
 ) -> None:
     create_endpoint(name="receiver", min_severity="WARN")
     _ingest(producer, ("auth.login.failed", "WARN"))
 
-    services.dispatch_outbox()
-    assert services.dispatch_outbox() == 0
-    # Even if a message were processed again, the (endpoint, event) constraint holds.
+    with django_capture_on_commit_callbacks(execute=True):
+        services.dispatch_outbox()
+    with django_capture_on_commit_callbacks(execute=True):
+        assert services.dispatch_outbox() == 0
+    # Even if a message were processed again, the (endpoint, event) constraint holds
+    # and the existing delivery is not enqueued a second time.
     OutboxMessage.objects.update(status=OutboxStatus.PENDING)
-    services.dispatch_outbox()
+    with django_capture_on_commit_callbacks(execute=True):
+        assert services.dispatch_outbox() == 1
 
     assert WebhookDelivery.objects.count() == 1
+    assert len(enqueued) == 1
 
 
 @pytest.mark.parametrize(
@@ -404,3 +413,27 @@ def test_secrets_and_signatures_never_reach_the_logs(
         rendered = record.getMessage() + str(record.__dict__)
         assert secret not in rendered
         assert signature not in rendered
+
+
+def test_tls_context_verifies_certificates_and_is_reused() -> None:
+    context = delivery_http._tls_context()
+
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname is True
+    assert delivery_http._tls_context() is context
+
+
+def test_completed_at_is_when_the_receiver_answered(
+    delivery: WebhookDelivery, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def slow_send(*args: Any, **kwargs: Any) -> delivery_http.AttemptResult:
+        return delivery_http.AttemptResult("succeeded", 204, "", 2.5)
+
+    monkeypatch.setattr(delivery_http, "send", slow_send)
+    started = timezone.now()
+
+    assert services.attempt_delivery(delivery.id, now=started) == "succeeded"
+
+    delivery.refresh_from_db()
+    assert delivery.last_attempt_at == started
+    assert delivery.completed_at == started + timedelta(seconds=2.5)

@@ -25,6 +25,7 @@ from typing import Any
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from django.core.exceptions import RequestDataTooBig, SuspiciousOperation
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import OperationalError
 from django.http import Http404, HttpRequest, JsonResponse
 from rest_framework import exceptions, status
 from rest_framework.response import Response
@@ -156,6 +157,11 @@ def _translate_django_exception(exc: Exception) -> Exception:
         return PayloadTooLarge()
     if isinstance(exc, SuspiciousOperation):
         return BadRequest()
+    if isinstance(exc, OperationalError):
+        # Lost connection or statement timeout: transient, so the client may retry. The
+        # cause is logged here because the 503 response deliberately does not carry it.
+        logger.warning("Database operation failed; answering 503", exc_info=exc)
+        return ServiceUnavailable()
     return exc
 
 

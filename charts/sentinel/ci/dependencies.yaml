@@ -1,0 +1,79 @@
+# Test-only PostgreSQL and Redis for the kind install (ephemeral storage).
+# PostgreSQL runs the same role bootstrap as docker compose, from the ConfigMap
+# "postgres-initdb" (created by CI from docker/postgres/initdb/).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: postgres}
+  template:
+    metadata:
+      labels: {app: postgres}
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16.15-alpine
+          env:
+            - {name: POSTGRES_DB, value: sentinel}
+            - {name: POSTGRES_USER, value: postgres}
+            - {name: POSTGRES_PASSWORD, value: ci-postgres-password}
+            - {name: POSTGRES_INITDB_ARGS, value: "--auth-host=scram-sha-256 --auth-local=trust"}
+            - {name: DB_OWNER_USER, value: sentinel_owner}
+            - {name: DB_OWNER_PASSWORD, value: ci-owner-password}
+            - {name: DB_APP_USER, value: sentinel_app}
+            - {name: DB_APP_PASSWORD, value: ci-app-password}
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "--host=127.0.0.1", "--username=postgres", "--dbname=sentinel"]
+            periodSeconds: 3
+          volumeMounts:
+            - {name: initdb, mountPath: /docker-entrypoint-initdb.d}
+      volumes:
+        - name: initdb
+          configMap: {name: postgres-initdb}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector: {app: postgres}
+  ports:
+    - port: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: redis}
+  template:
+    metadata:
+      labels: {app: redis}
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.4.11-alpine
+          args: ["--requirepass", "ci-redis-password", "--save", "", "--appendonly", "no"]
+          ports:
+            - containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "REDISCLI_AUTH=ci-redis-password redis-cli ping | grep -q PONG"]
+            periodSeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  selector: {app: redis}
+  ports:
+    - port: 6379

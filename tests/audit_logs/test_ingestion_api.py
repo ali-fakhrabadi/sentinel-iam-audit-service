@@ -301,7 +301,7 @@ def test_database_failure_stores_nothing_and_says_so(
 def test_warn_and_critical_events_enter_the_outbox_and_trigger_dispatch(
     ingest: tuple[ServiceAccount, APIClient],
     django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
-    sent_tasks: list[str],
+    sent_tasks: list[tuple[str, float | None]],
 ) -> None:
     account, client = ingest
     events = [_event(severity="INFO"), _event(severity="WARN"), _event(severity="CRITICAL")]
@@ -312,7 +312,23 @@ def test_warn_and_critical_events_enter_the_outbox_and_trigger_dispatch(
     queued = OutboxMessage.objects.filter(event__producer_service_account=account)
     assert sorted(queued.values_list("event__severity", flat=True)) == ["CRITICAL", "WARN"]
     assert set(queued.values_list("status", flat=True)) == {OutboxStatus.PENDING}
-    assert sent_tasks == ["webhooks.dispatch_outbox"]
+    # A leading drain right away and a trailing one at the end of the window.
+    assert sent_tasks == [("webhooks.dispatch_outbox", None), ("webhooks.dispatch_outbox", 1)]
+
+
+def test_dispatch_triggers_are_coalesced_per_window(
+    ingest: tuple[ServiceAccount, APIClient],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    sent_tasks: list[tuple[str, float | None]],
+) -> None:
+    _, client = ingest
+
+    with django_capture_on_commit_callbacks(execute=True):
+        for _ in range(5):
+            client.post(SINGLE_URL, _event(severity="CRITICAL"), format="json")
+
+    # Five commits inside one window share one leading and one trailing drain.
+    assert sent_tasks == [("webhooks.dispatch_outbox", None), ("webhooks.dispatch_outbox", 1)]
 
 
 def test_ingestion_outcomes_are_counted_in_metrics(

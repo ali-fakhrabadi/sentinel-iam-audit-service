@@ -10,6 +10,7 @@ from typing import Any
 
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from django.core.exceptions import RequestDataTooBig, SuspiciousOperation
+from django.db import OperationalError
 from django.http import Http404
 from django.urls import include, path
 from rest_framework import exceptions, serializers
@@ -91,7 +92,13 @@ class TooBigView(_PublicView):
         raise RequestDataTooBig("Request body exceeded settings.DATA_UPLOAD_MAX_MEMORY_SIZE.")
 
 
+class DatabaseTimeoutView(_PublicView):
+    def get(self, request: Request) -> Response:
+        raise OperationalError("canceling statement due to statement timeout")
+
+
 urlpatterns = [
+    path("errors/db-timeout/", DatabaseTimeoutView.as_view()),
     path("errors/validation/", ValidationView.as_view()),
     path("errors/echo/", EchoView.as_view()),
     path("errors/auth/", AuthRequiredView.as_view()),

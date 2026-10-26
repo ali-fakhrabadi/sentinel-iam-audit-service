@@ -1,0 +1,111 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sentinel.fullname" . }}-worker
+  labels:
+    {{- include "sentinel.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      {{- include "sentinel.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "sentinel.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum }}
+    spec:
+      {{- include "sentinel.podSecurity" . | nindent 6 }}
+      # Lets in-flight deliveries finish; unacknowledged tasks are redelivered (acks_late).
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: worker
+          image: {{ include "sentinel.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - celery
+            - --app
+            - config
+            - worker
+            - --loglevel
+            - INFO
+            - --concurrency
+            - {{ .Values.worker.concurrency | quote }}
+            - --hostname
+            - worker@$(POD_NAME)
+            - --without-gossip
+            - --without-mingle
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          envFrom:
+            - configMapRef: {name: {{ include "sentinel.fullname" . }}-config}
+          env:
+            {{- include "sentinel.env" . | nindent 12 }}
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "celery --app config inspect ping --destination worker@$POD_NAME --timeout 10 > /dev/null"]
+            initialDelaySeconds: 30
+            periodSeconds: 60
+            timeoutSeconds: 20
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        {{- include "sentinel.tmpVolume" . | nindent 8 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sentinel.fullname" . }}-beat
+  labels:
+    {{- include "sentinel.labels" . | nindent 4 }}
+    app.kubernetes.io/component: beat
+spec:
+  # Exactly one scheduler: Recreate never runs two beats during a rollout.
+  replicas: 1
+  strategy:
+    type: Recreate
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      {{- include "sentinel.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: beat
+  template:
+    metadata:
+      labels:
+        {{- include "sentinel.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: beat
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum }}
+    spec:
+      {{- include "sentinel.podSecurity" . | nindent 6 }}
+      containers:
+        - name: beat
+          image: {{ include "sentinel.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [celery, --app, config, beat, --loglevel, INFO, --schedule, /tmp/celerybeat-schedule, --pidfile, /tmp/celerybeat.pid]
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          envFrom:
+            - configMapRef: {name: {{ include "sentinel.fullname" . }}-config}
+          env:
+            {{- include "sentinel.env" . | nindent 12 }}
+          livenessProbe:
+            exec:
+              command: ["python", "-c", "import os; os.kill(int(open('/tmp/celerybeat.pid').read()), 0)"]
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.beat.resources | nindent 12 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        {{- include "sentinel.tmpVolume" . | nindent 8 }}

@@ -31,10 +31,16 @@ workers = _int_env("GUNICORN_WORKERS", 3)
 threads = _int_env("GUNICORN_THREADS", 4)
 timeout = _int_env("GUNICORN_TIMEOUT", 30)
 graceful_timeout = _int_env("GUNICORN_GRACEFUL_TIMEOUT", 30)
-keepalive = _int_env("GUNICORN_KEEPALIVE", 5)
+# Idle keep-alive connections must outlive the client's or proxy's, or a request sent on a
+# connection the server is closing fails with EOF (POSTs are not retried). 75 s exceeds the
+# common proxy defaults (nginx and ingress-nginx 60 s); idle connections cost no thread.
+keepalive = _int_env("GUNICORN_KEEPALIVE", 75)
 
-# Recycle workers periodically to bound the impact of slow memory growth.
-max_requests = _int_env("GUNICORN_MAX_REQUESTS", 2000)
+# Worker recycling is off by default. When a recycled worker exits it closes its idle
+# keep-alive connections, and a client that sent its next request on one at that moment
+# gets EOF: 2-3 of ~900 bulk requests failed that way in the benchmark. Memory growth is
+# bounded by the container limit instead. Set GUNICORN_MAX_REQUESTS (e.g. 2000) to recycle.
+max_requests = _int_env("GUNICORN_MAX_REQUESTS", 0)
 max_requests_jitter = _int_env("GUNICORN_MAX_REQUESTS_JITTER", 200)
 
 # Heartbeat files on tmpfs avoid worker stalls on slow or read-only disks.
@@ -47,6 +53,10 @@ limit_request_fields = 100
 limit_request_field_size = 8190
 
 forwarded_allow_ips = os.environ.get("GUNICORN_FORWARDED_ALLOW_IPS", "127.0.0.1")
+
+# The runtime control socket (gunicornc) is not used; it would also try to write to
+# the non-existent home directory on a read-only filesystem.
+control_socket_disable = True
 
 accesslog = None
 errorlog = "-"

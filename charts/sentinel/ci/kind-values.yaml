@@ -1,0 +1,28 @@
+# Values for the CI install on kind. Secrets are throwaway test values.
+image:
+  repository: sentinel-iam-audit-service
+  tag: ci
+  pullPolicy: Never
+
+config:
+  allowedHosts: "localhost,127.0.0.1"
+  secureHttps: false
+  trustedProxyCount: 0
+
+web:
+  replicas: 1
+  pdb:
+    enabled: false
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 768Mi}
+
+secrets:
+  values:
+    DJANGO_SECRET_KEY: ci-kind-insecure-django-secret-key-0123456789abcdefghijklmnop
+    JWT_SIGNING_KEY: ci-kind-insecure-jwt-signing-key-0123456789abcdefghijklmnopqr
+    METRICS_AUTH_TOKEN: ci-kind-metrics-token
+    WEBHOOK_SECRET_ENCRYPTION_KEYS: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    DB_PASSWORD: ci-app-password
+    DB_OWNER_PASSWORD: ci-owner-password
+    REDIS_PASSWORD: ci-redis-password

@@ -200,23 +200,31 @@ def signing_secrets(endpoint: WebhookEndpoint, *, now: datetime) -> list[str]:
 def dispatch_outbox(*, batch_size: int = 100, now: datetime | None = None) -> int:
     """Turn due outbox messages into delivery records. Returns messages processed."""
     moment = now or timezone.now()
-    new_delivery_ids: list[uuid.UUID] = []
     with transaction.atomic():
         messages = audit_services.outbox_claim_batch(limit=batch_size, now=moment)
         if not messages:
             return 0
         endpoints = list(WebhookEndpoint.objects.filter(is_active=True))
-        for message in messages:
-            for endpoint in endpoints:
-                if not endpoint.matches(message.event):
-                    continue
-                delivery_record, created = WebhookDelivery.objects.get_or_create(
-                    endpoint=endpoint,
-                    event=message.event,
-                    defaults={"status": DeliveryStatus.PENDING, "next_attempt_at": moment},
-                )
-                if created:
-                    new_delivery_ids.append(delivery_record.id)
+        candidates = [
+            WebhookDelivery(
+                endpoint=endpoint,
+                event=message.event,
+                status=DeliveryStatus.PENDING,
+                next_attempt_at=moment,
+                created_at=moment,
+            )
+            for message in messages
+            for endpoint in endpoints
+            if endpoint.matches(message.event)
+        ]
+        # One INSERT ... ON CONFLICT DO NOTHING for the batch: a pair that already has a
+        # delivery (a re-processed message) keeps it, and only new rows are enqueued.
+        WebhookDelivery.objects.bulk_create(candidates, ignore_conflicts=True)
+        new_delivery_ids = list(
+            WebhookDelivery.objects.filter(
+                id__in=[candidate.id for candidate in candidates]
+            ).values_list("id", flat=True)
+        )
         audit_services.outbox_mark_dispatched(messages, now=moment)
         transaction.on_commit(lambda: enqueue_deliveries(new_delivery_ids))
     logger.info(
@@ -353,16 +361,22 @@ def attempt_delivery(delivery_id: uuid.UUID, *, now: datetime | None = None) -> 
 def _record_result(
     record: WebhookDelivery, result: delivery.AttemptResult, now: datetime
 ) -> AttemptOutcome:
+    """Store the outcome of an attempt that started at ``now``.
+
+    ``completed_at`` is when the receiver answered (start + HTTP duration), so delivery
+    latency can be read directly from the table; retries are scheduled from the start.
+    """
+    finished = now + timedelta(seconds=result.duration_seconds)
     outcome: AttemptOutcome
     with transaction.atomic():
         if result.outcome == "succeeded":
-            _finish(record, DeliveryStatus.SUCCEEDED, now, status_code=result.status_code)
+            _finish(record, DeliveryStatus.SUCCEEDED, finished, status_code=result.status_code)
             outcome = "succeeded"
         elif result.outcome == "permanent":
             _finish(
                 record,
                 DeliveryStatus.FAILED,
-                now,
+                finished,
                 error=result.error,
                 status_code=result.status_code,
             )
@@ -371,7 +385,7 @@ def _record_result(
             _finish(
                 record,
                 DeliveryStatus.EXHAUSTED,
-                now,
+                finished,
                 error=result.error,
                 status_code=result.status_code,
             )

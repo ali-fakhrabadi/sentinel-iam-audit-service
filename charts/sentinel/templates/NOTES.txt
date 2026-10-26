@@ -1,0 +1,13 @@
+Sentinel {{ .Chart.AppVersion }} is deployed as release "{{ .Release.Name }}".
+
+Components: web ({{ .Values.web.replicas }} replicas), worker, beat (single scheduler),
+and a migration Job run as the schema owner on install and before each upgrade.
+
+Check readiness:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "sentinel.fullname" . }}-web 8000:{{ .Values.service.port }}
+  curl -H "Host: localhost" http://127.0.0.1:8000/health/ready/
+
+Create the first administrator:
+  kubectl -n {{ .Release.Namespace }} exec -it deploy/{{ include "sentinel.fullname" . }}-web -- python manage.py createsuperuser
+
+API documentation: /api/docs/ (Swagger UI) and /api/redoc/.

@@ -239,3 +239,85 @@ jobs:
       - name: Publish image to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: docker push --all-tags "${IMAGE}"
+
+  kubernetes:
+    name: Helm chart on kind (Kubernetes 1.35)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    needs: [quality]
+    env:
+      LOCAL_TAG: sentinel-iam-audit-service:ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.1
+
+      - name: Lint and render the chart
+        run: |
+          helm lint charts/sentinel -f charts/sentinel/ci/kind-values.yaml --strict
+          helm template sentinel charts/sentinel -f charts/sentinel/ci/kind-values.yaml > /dev/null
+          # Rendering without secrets must fail loudly instead of deploying empty keys.
+          if helm template sentinel charts/sentinel > /dev/null 2>&1; then
+            echo "chart rendered without required secrets" && exit 1
+          fi
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build runtime image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: runtime
+          load: true
+          push: false
+          tags: ${{ env.LOCAL_TAG }}
+          cache-from: type=gha
+
+      - name: Create kind cluster
+        uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
+        with:
+          version: v0.33.0
+          node_image: kindest/node:v1.35.8
+          cluster_name: sentinel
+
+      - name: Load image and start PostgreSQL and Redis
+        run: |
+          kind load docker-image "${LOCAL_TAG}" --name sentinel
+          kubectl create configmap postgres-initdb --from-file=docker/postgres/initdb/
+          kubectl apply -f charts/sentinel/ci/dependencies.yaml
+          kubectl rollout status deploy/postgres deploy/redis --timeout=180s
+
+      - name: Install the chart (migrations run as a hook)
+        run: |
+          helm install sentinel charts/sentinel -f charts/sentinel/ci/kind-values.yaml \
+            --wait --timeout 6m
+          kubectl get pods -o wide
+
+      - name: helm test (readiness, schema, OpenAPI through the Service)
+        run: helm test sentinel --logs --timeout 3m
+
+      - name: End-to-end smoke test through the Service
+        run: |
+          kubectl port-forward svc/sentinel-web 8000:80 > /dev/null 2>&1 &
+          sleep 3
+          curl -fsS -H "Host: localhost" http://127.0.0.1:8000/health/ready/
+          echo
+          status=$(curl -s -o /dev/null -w '%{http_code}' -H "Host: localhost" http://127.0.0.1:8000/api/v1/accounts/me/)
+          test "$status" = 401
+          # Least-privilege roles and append-only guard are in place in the cluster too.
+          kubectl exec deploy/postgres -- psql -U postgres -d sentinel -tAc \
+            "SELECT has_table_privilege('sentinel_app', 'audit_logs_auditevent', 'UPDATE')" | grep -qx f
+          kubectl exec deploy/postgres -- psql -U postgres -d sentinel -tAc \
+            "SELECT count(*) FROM pg_trigger WHERE tgname LIKE 'audit_event_block_%'" | grep -qx 3
+
+      - name: Diagnostics
+        if: failure()
+        run: |
+          kubectl get all,networkpolicy,jobs -o wide || true
+          kubectl describe pods || true
+          kubectl logs -l app.kubernetes.io/instance=sentinel --all-containers --tail=200 || true
+          kubectl logs deploy/postgres --tail=100 || true

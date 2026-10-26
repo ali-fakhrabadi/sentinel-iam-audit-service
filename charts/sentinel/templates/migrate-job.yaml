@@ -1,0 +1,46 @@
+{{- if .Values.migrations.enabled }}
+# Migrations run as the schema owner, as a hook: after install (once the Secret and
+# ConfigMap exist) and before every upgrade (so new code never sees an old schema).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "sentinel.fullname" . }}-migrate
+  labels:
+    {{- include "sentinel.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    "helm.sh/hook": post-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrations.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migrations.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "sentinel.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      {{- include "sentinel.podSecurity" . | nindent 6 }}
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: {{ include "sentinel.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [python, manage.py, migrate, --noinput]
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          envFrom:
+            - configMapRef: {name: {{ include "sentinel.fullname" . }}-config}
+          env:
+            {{- include "sentinel.env" . | nindent 12 }}
+            # Override the runtime role with the schema owner, without a statement timeout.
+            - {name: DB_USER, value: {{ .Values.database.ownerUser | quote }}}
+            - name: DB_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ include "sentinel.secretName" . }}, key: DB_OWNER_PASSWORD}}
+            - {name: DB_STATEMENT_TIMEOUT_MS, value: "0"}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        {{- include "sentinel.tmpVolume" . | nindent 8 }}
+{{- end }}

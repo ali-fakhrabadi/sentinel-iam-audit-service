@@ -24,6 +24,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from django.conf import settings
+from django.core.cache import cache
 from django.db import transaction
 from django.db.models import QuerySet
 from django.utils import timezone
@@ -71,10 +72,26 @@ def _needs_outbox(severity: str) -> bool:
     return SEVERITY_RANK[severity] >= SEVERITY_RANK[settings.AUDIT_OUTBOX_MIN_SEVERITY]
 
 
+_DISPATCH_GUARD_KEY = "audit:outbox:dispatch-scheduled"
+
+
 def _enqueue_outbox_dispatch() -> None:
-    """Best effort: if the broker is down, the beat reconciliation drains the outbox."""
+    """Drain the outbox at most twice per window, however many transactions commit.
+
+    The first commit in a window sets a short-lived cache key and schedules two drains:
+    one immediately (an isolated alert goes out within milliseconds) and one at the end
+    of the window, which covers every commit made meanwhile. Later commits in the same
+    window do nothing. Without coalescing, busy ingestion floods the queue with
+    near-empty drain tasks that delay real webhook deliveries.
+
+    Best effort: if Redis or the broker is down, the beat reconciliation drains the
+    outbox anyway.
+    """
+    window: int = settings.AUDIT_OUTBOX_DISPATCH_WINDOW_SECONDS
     try:
-        celery_app.send_task(settings.AUDIT_OUTBOX_DISPATCH_TASK)
+        if cache.add(_DISPATCH_GUARD_KEY, 1, timeout=window):
+            celery_app.send_task(settings.AUDIT_OUTBOX_DISPATCH_TASK)
+            celery_app.send_task(settings.AUDIT_OUTBOX_DISPATCH_TASK, countdown=window)
     except Exception:
         logger.warning(
             "Could not enqueue outbox dispatch; reconciliation will pick it up.", exc_info=True

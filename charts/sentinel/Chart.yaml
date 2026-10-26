@@ -1,0 +1,13 @@
+apiVersion: v2
+name: sentinel
+description: Sentinel IAM & Audit Service - API, Celery worker and beat, with migrations as a Helm hook
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+kubeVersion: ">=1.29.0-0"
+keywords: [iam, rbac, audit-log, webhooks, django]
+home: https://github.com/ali-fakhrabadi/sentinel-iam-audit-service
+sources:
+  - https://github.com/ali-fakhrabadi/sentinel-iam-audit-service
+maintainers:
+  - name: Ali Fakhrabadi
