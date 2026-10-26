@@ -33,8 +33,8 @@ spec:
           envFrom:
             - configMapRef: {name: {{ include "sentinel.fullname" . }}-config}
           env:
-            {{- include "sentinel.env" . | nindent 12 }}
-            # Override the runtime role with the schema owner, without a statement timeout.
+            {{- include "sentinel.sharedEnv" . | nindent 12 }}
+            # The schema owner instead of the runtime role, without a statement timeout.
             - {name: DB_USER, value: {{ .Values.database.ownerUser | quote }}}
             - name: DB_PASSWORD
               valueFrom: {secretKeyRef: {name: {{ include "sentinel.secretName" . }}, key: DB_OWNER_PASSWORD}}

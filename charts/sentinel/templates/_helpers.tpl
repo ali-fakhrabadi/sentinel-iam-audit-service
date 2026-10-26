@@ -40,6 +40,15 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- define "sentinel.env" -}}
 - name: DB_PASSWORD
   valueFrom: {secretKeyRef: {name: {{ include "sentinel.secretName" . }}, key: DB_PASSWORD}}
+{{ include "sentinel.sharedEnv" . }}
+{{- end -}}
+
+{{/*
+Secret-backed variables every container needs, except the database password, which
+differs between the runtime role and the migration (schema-owner) role. Kubernetes
+rejects duplicate env names under server-side apply, so it cannot simply be overridden.
+*/}}
+{{- define "sentinel.sharedEnv" -}}
 - name: REDIS_PASSWORD
   valueFrom: {secretKeyRef: {name: {{ include "sentinel.secretName" . }}, key: REDIS_PASSWORD}}
 - name: CELERY_BROKER_URL
