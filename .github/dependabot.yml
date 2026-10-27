@@ -24,5 +24,15 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # Major PostgreSQL and Redis upgrades are deliberate changes: a PostgreSQL
+      # major version cannot start on an older data directory (pg_upgrade or dump
+      # and restore), and the same versions are pinned in the CI test services and
+      # the Helm chart's CI dependencies, which this ecosystem does not update.
+      # Minor and patch releases still come through.
+      - dependency-name: postgres
+        update-types: ["version-update:semver-major"]
+      - dependency-name: redis
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: build
