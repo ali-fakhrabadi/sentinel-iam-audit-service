@@ -133,7 +133,7 @@ services:
           memory: 1g
 
   redis:
-    image: redis:7.4.11-alpine
+    image: redis:7.4.12-alpine
     # Broker and cache only: no persistence. Lost tasks are re-dispatched from the
     # PostgreSQL transactional outbox, which remains the source of truth.
     command:
